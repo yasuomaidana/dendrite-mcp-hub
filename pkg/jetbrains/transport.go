@@ -19,7 +19,6 @@ type Transport interface {
 	Close() error
 }
 
-
 // HTTPTransport implements Transport over HTTP/SSE REST connection to JetBrains IDE.
 type HTTPTransport struct {
 	client  *http.Client

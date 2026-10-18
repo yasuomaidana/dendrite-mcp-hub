@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"Dendrite/pkg/jetbrains"
+	"github.com/yasuomaidana/dendrite-mcp-hub/pkg/jetbrains"
 )
 
 type scriptedServer struct {

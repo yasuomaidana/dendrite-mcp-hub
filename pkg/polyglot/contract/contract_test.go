@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"Dendrite/pkg/jetbrains"
-	"Dendrite/pkg/polyglot/contract"
+	"github.com/yasuomaidana/dendrite-mcp-hub/pkg/jetbrains"
+	"github.com/yasuomaidana/dendrite-mcp-hub/pkg/polyglot/contract"
 )
 
 func TestNormalizeType(t *testing.T) {
@@ -449,7 +449,10 @@ func TestContractMonitor_QuadLanguageScan(t *testing.T) {
 		t.Fatalf("CheckDrift failed: %v", err)
 	}
 	if report.TotalViolations != 0 {
-		for _, v := range report.Violations { t.Logf("Violation: %+v", v) }; t.Errorf("expected 0 violations across clean quad-language models, got %d", report.TotalViolations)
+		for _, v := range report.Violations {
+			t.Logf("Violation: %+v", v)
+		}
+		t.Errorf("expected 0 violations across clean quad-language models, got %d", report.TotalViolations)
 	}
 
 	// Test optional mismatch

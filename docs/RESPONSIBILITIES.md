@@ -2,19 +2,19 @@
 
 > **Plane Project**: `DMCP` (workspace `dendrite-ws`, `http://localhost:8090`)  
 > **Extraction Umbrella**: `DEN-971` (first child: `DMCP-1`)  
-> **Target Go Module**: `dendrite.dev/mcphub` (currently initialized in `go.mod` as `module dendrite-mcp-hub`, `go 1.22`)
+> **Go Module**: `github.com/yasuomaidana/dendrite-mcp-hub` (`go 1.25`). The `dendrite.dev/mcphub` vanity path was dropped: nothing serves it, so consumers would need a `replace`; the GitHub path resolves directly in remote mode and through `go.work` in local mode.
 
 ---
 
 ## 1. Purpose
 
-`dendrite-mcp-hub` (`dendrite.dev/mcphub`) is the unified Model Context Protocol (MCP) JSON-RPC 2.0 server, tool registry, and bidirectional IDE/upstream connector bridge for the Dendrite ecosystem (Pillar 5 and Pillar 9 of the 2026-10 Architecture Execution Plan). It exposes Dendrite's tool catalog to MCP-capable AI clients and IDE plugins (JetBrains IDEs, VS Code, Neovim, Zed, Claude Code, Antigravity, Cursor) while acting as an outbound MCP client and proxy to IDE servers (JetBrains built-in MCP at `:63342/api/mcp`) and upstream MCP services (Penpot MCP, Plane v2 AI/issue workflows, Engram topic memory, REA disassemblers, and local Graphify Code Knowledge). Extracting this boundary isolates protocol transport, tool schema registration, IDE plugins, and external SaaS/self-hosted MCP connectors from the core control-plane daemon (`dendrite-control`) and the Rust compute sidecars (`dendrite-core-rs`, `dendrite-rag-rs`, `dendrite-git-rs`).
+`dendrite-mcp-hub` (`github.com/yasuomaidana/dendrite-mcp-hub`) is the unified Model Context Protocol (MCP) JSON-RPC 2.0 server, tool registry, and bidirectional IDE/upstream connector bridge for the Dendrite ecosystem (Pillar 5 and Pillar 9 of the 2026-10 Architecture Execution Plan). It exposes Dendrite's tool catalog to MCP-capable AI clients and IDE plugins (JetBrains IDEs, VS Code, Neovim, Zed, Claude Code, Antigravity, Cursor) while acting as an outbound MCP client and proxy to IDE servers (JetBrains built-in MCP at `:63342/api/mcp`) and upstream MCP services (Penpot MCP, Plane v2 AI/issue workflows, Engram topic memory, REA disassemblers, and local Graphify Code Knowledge). Extracting this boundary isolates protocol transport, tool schema registration, IDE plugins, and external SaaS/self-hosted MCP connectors from the core control-plane daemon (`dendrite-control`) and the Rust compute sidecars (`dendrite-core-rs`, `dendrite-rag-rs`, `dendrite-git-rs`).
 
 ---
 
 ## 2. Owns vs. Does NOT Own
 
-### Owns (`dendrite-mcp-hub` / `dendrite.dev/mcphub`)
+### Owns (`dendrite-mcp-hub` / `github.com/yasuomaidana/dendrite-mcp-hub`)
 
 - **MCP JSON-RPC 2.0 Server & Tool Registry (`pkg/mcpserver`)**:
   - Protocol version `2024-11-05` lifecycle (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`), line-delimited stdio server (`ServeStdio` with 10 MB scanner buffer), and thread-safe tool registration (`RegisterTool`, `ListTools`, `HandleRequest`).
@@ -48,7 +48,7 @@
 ## 3. Interfaces
 
 ### What `dendrite-mcp-hub` Exposes
-1. **Go Module API (`dendrite.dev/mcphub`)**:
+1. **Go Module API (`github.com/yasuomaidana/dendrite-mcp-hub`)**:
    - `pkg/mcpserver`: `Server`, `ServerConfig`, `NewServer`, `RegisterTool`, `RegisterDefaultTools`, `ListTools`, `HandleRequest`, `ServeStdio`, `Tool`, `ToolHandler`, `CallToolParams`, `CallToolResult`, `ContentItem`, `Dependencies`.
    - `pkg/jetbrains`: `Client`, `NewClient`, `Transport`, `HTTPTransport`, `StdioTransport`, `Bridge`, `NewBridge`, `SetupJetBrainsToolset`, `SetupOptions`, `SetupResult`, `MCPConfig`.
    - `pkg/polyglot/contract`: `ContractMonitor`, `NewContractMonitor`, `SchemaContract`, `DriftViolation`.
@@ -113,7 +113,7 @@ Every file listed below was verified by reading `/Users/yasuomaidana/GoLandProje
    - `pkg/ui/penpot/penpot.go` — Penpot component spec parser and token diff synchronizer (`DEN-076` split between `pkg/ui/penpot` and `pkg/mcpserver/tools_penpot.go`).
    - `pkg/personalcontext/canvas/types.go` (and `PenpotUIBridge`) — Canvas writing and Penpot UI bridge actions exposed by `pkg/mcpserver/tools_canvas.go`.
    - `pkg/agent/triage/triage.go` — Local Agent Triage engine (`DEN-050` split across `pkg/agent/triage`, `pkg/jetbrains`, `pkg/mcpserver/tools_triage.go`, and `pkg/gateway`).
-   - `cmd/dendrite/mcp.go` and `cmd/dendrite/main.go` (lines 1127–1300) — Control-plane CLI entrypoints (`dendrite mcp` and `dendrite jetbrains`) that remain in `dendrite-control` as callers of `dendrite.dev/mcphub`.
+   - `cmd/dendrite/mcp.go` and `cmd/dendrite/main.go` (lines 1127–1300) — Control-plane CLI entrypoints (`dendrite mcp` and `dendrite jetbrains`) that remain in `dendrite-control` as callers of `github.com/yasuomaidana/dendrite-mcp-hub`.
 5. **Planned Packages Referenced in Tickets (Verified Not Yet Present in `Dendrite/pkg/`)**:
    - `pkg/mcp/publisher` and `internal/mcp/publisher` (`DEN-091`, `DEN-092`, `DEN-093` — `To Do`).
    - `pkg/rea/client` (`DEN-009` — `To Do`).
@@ -128,7 +128,7 @@ Every file listed below was verified by reading `/Users/yasuomaidana/GoLandProje
 
 ### MCP Tool Families: Hub Ownership vs. Control-Plane Boundary
 
-All 87 generated MCP tool reference docs under `Dendrite/docs/mcp/` are copied mechanically into `docs/imported/mcp/`. Below is the grouping of all registered tool families by prefix, showing which families belong natively in `dendrite-mcp-hub` vs. which families are **control-plane or sidecar domain tools** that should either remain registered in `dendrite-control` (using `dendrite.dev/mcphub` as a library) or be proxied over RPC to prevent circular Go module dependencies:
+All 87 generated MCP tool reference docs under `Dendrite/docs/mcp/` are copied mechanically into `docs/imported/mcp/`. Below is the grouping of all registered tool families by prefix, showing which families belong natively in `dendrite-mcp-hub` vs. which families are **control-plane or sidecar domain tools** that should either remain registered in `dendrite-control` (using `github.com/yasuomaidana/dendrite-mcp-hub` as a library) or be proxied over RPC to prevent circular Go module dependencies:
 
 | Tool Name Prefix / Family | Registered Tools in `pkg/mcpserver` | Target Owner | Boundary Recommendation |
 | :--- | :--- | :--- | :--- |
@@ -155,9 +155,9 @@ All 87 generated MCP tool reference docs under `Dendrite/docs/mcp/` are copied m
 The five-repository workspace is synchronized by `dendrite pool` under `~/GoLandProjects/`:
 
 - **Go Workspace (`~/GoLandProjects/go.work`)**:
-  - Links `./dendrite-control` (`dendrite.dev/control`) and `./dendrite-mcp-hub` (`dendrite.dev/mcphub`) for atomic multi-module Go builds (`pool resolve` generates `go.work` and JetBrains `.idea/modules.xml` scopes).
+  - Links `./dendrite-control` (`dendrite.dev/control`) and `./dendrite-mcp-hub` (`github.com/yasuomaidana/dendrite-mcp-hub`) for atomic multi-module Go builds (`pool resolve` generates `go.work` and JetBrains `.idea/modules.xml` scopes).
 - **`dendrite-mcp-hub` → `dendrite-control` Directionality**:
-  - To prevent circular Go module imports (`dendrite.dev/control` ↔ `dendrite.dev/mcphub`), `dendrite-mcp-hub` must **not** directly import internal `dendrite.dev/control/pkg/...` domain packages. Instead, `dendrite-mcp-hub` defines the MCP server, protocol types, `ToolHandler` registration interfaces, `pkg/jetbrains` bridge, `pkg/polyglot/contract`, and upstream MCP connectors; `dendrite-control` imports `dendrite.dev/mcphub` (or communicates over JSON-RPC/HTTP) to register control-plane tool handlers.
+  - To prevent circular Go module imports (`dendrite.dev/control` ↔ `github.com/yasuomaidana/dendrite-mcp-hub`), `dendrite-mcp-hub` must **not** directly import internal `dendrite.dev/control/pkg/...` domain packages. Instead, `dendrite-mcp-hub` defines the MCP server, protocol types, `ToolHandler` registration interfaces, `pkg/jetbrains` bridge, `pkg/polyglot/contract`, and upstream MCP connectors; `dendrite-control` imports `github.com/yasuomaidana/dendrite-mcp-hub` (or communicates over JSON-RPC/HTTP) to register control-plane tool handlers.
 - **Rust Sidecar Crates (`dendrite-core-rs`, `dendrite-rag-rs`, `dendrite-git-rs`) & `embedag`**:
   - `dendrite-core-rs` (`dendrite-core`) and `dendrite-rag-rs` (`dendrite-rag`) consume the sibling **`embedag`** crate via path dependency `../../RustRoverProjects/embedag/crates/embedag` with `default-features = false, features = ["core", "matcher"]` (and `[patch."https://github.com/yasuomaidana/dendrite-core-rs"]` managed by `dendrite pool resolve`).
   - When `dendrite-mcp-hub` serves Code Knowledge (`DEND-201`) or RAG/AST MCP requests directly, it invokes the `dendrite-core` and `dendrite-rag` binaries over JSON-RPC 2.0 stdio (`proto/*.json`).
@@ -171,7 +171,7 @@ Tracked in Plane v2 project **`DMCP`** (workspace `dendrite-ws`, `http://localho
 ### A. Core MCP Server, JetBrains Bridge & Routine Control
 | Ticket | Title & Target Packages | Action | Status |
 | :--- | :--- | :--- | :--- |
-| **DEN-971 / DMCP-1** | Extract `dendrite-mcp-hub` (`dendrite.dev/mcphub`) repository boundary & module | umbrella / child | Backlog |
+| **DEN-971 / DMCP-1** | Extract `dendrite-mcp-hub` (`github.com/yasuomaidana/dendrite-mcp-hub`) repository boundary & module | umbrella / child | Backlog |
 | **DEN-040** | Dendrite Native MCP Server & Tool Registry Bridge (`pkg/mcpserver`, `cmd/dendrite`) | move | To Verify |
 | **DEN-028** | JetBrains IDE MCP Integration & Communication Bridge (`pkg/jetbrains`) | move | To Verify |
 | **DEN-046** | JetBrains IDE Toolset Integration, 19 MCP Tools & Agentic Developer Workflow Guide (`pkg/jetbrains`, `pkg/mcpserver`, `cmd/dendrite`) | split | To Verify |
@@ -266,8 +266,8 @@ The following 15 documents in [`docs/imports.json`](imports.json) were verified 
 1. **`pkg/mcpserver` Is Not Currently Self-Contained (28+ Control-Plane Package Imports)**:
    - Section 5 of `2026-10-quality-audit-execution-plan.md` states that `pkg/mcpserver` is *"already self-contained, 7.5k LOC"*. While `pkg/mcpserver/server.go` and `pkg/mcpserver/types.go` use only Go stdlib, `pkg/mcpserver/tools*.go` directly imports **28+ internal `Dendrite/pkg/...` control-plane packages** (`pkg/agent`, `pkg/audit`, `pkg/devtool`, `pkg/distcodebase`, `pkg/docusaurus`, `pkg/env`, `pkg/gateway`, `pkg/inference`, `pkg/node/migrate`, `pkg/ollama`, `pkg/perf`, `pkg/pool/...`, `pkg/quality`, `pkg/query/...`, `pkg/rag`, `pkg/scheduler/...`, `pkg/store/...`, `pkg/story/fork`, `pkg/telemetry`, `pkg/testgen`, `pkg/tokens`, `pkg/topology/...`, `pkg/tracker/...`, `pkg/vcs`, `pkg/workspace`).
    - **Resolution Needed in `DMCP-1`**: Extract `pkg/mcpserver/{server,types}.go`, `pkg/jetbrains`, `pkg/polyglot/contract`, and hub-native tool handlers into `dendrite-mcp-hub` first, and either keep control-plane `tools_*.go` registration in `dendrite-control` (injecting them via `Server.RegisterTool`) or decouple them behind a provider interface / RPC proxy so `dendrite-mcp-hub` never imports `dendrite-control`.
-2. **Go Module Path & Version Mismatch (`dendrite-mcp-hub` vs. `dendrite.dev/mcphub`)**:
-   - `/Users/yasuomaidana/GoLandProjects/dendrite-mcp-hub/go.mod` currently declares `module dendrite-mcp-hub` (`go 1.22`), and `/Users/yasuomaidana/GoLandProjects/Dendrite/go.mod` declares `module Dendrite` (`go 1.25`), whereas Pillar 9 specifies `module dendrite.dev/mcphub` and `module dendrite.dev/control` linked via `~/GoLandProjects/go.work`.
+2. **Go Module Path & Version Mismatch (`dendrite-mcp-hub` vs. `github.com/yasuomaidana/dendrite-mcp-hub`)**:
+   - `/Users/yasuomaidana/GoLandProjects/dendrite-mcp-hub/go.mod` currently declares `module dendrite-mcp-hub` (`go 1.22`), and `/Users/yasuomaidana/GoLandProjects/Dendrite/go.mod` declares `module Dendrite` (`go 1.25`), whereas Pillar 9 specifies `module github.com/yasuomaidana/dendrite-mcp-hub` and `module dendrite.dev/control` linked via `~/GoLandProjects/go.work`.
 3. **Duplicated JSON-RPC 2.0 / MCP Protocol Types Across `pkg/mcpserver` and `pkg/jetbrains`**:
    - Both `pkg/mcpserver/types.go` (server-side) and `pkg/jetbrains/types.go` (client-side) independently define `JSONRPCRequest`, `JSONRPCResponse`, `JSONRPCError`, `Tool`, `CallToolParams`, `CallToolResult`, and `ContentItem` (with slight differences: `mcpserver.CallToolParams.Arguments` is `map[string]interface{}` vs. `map[string]any` in `jetbrains`, and `mcpserver.ServerInfo` includes `Capabilities`). Extracting both into `dendrite-mcp-hub` should unify shared MCP wire types.
 4. **`DEND-201` (Code Knowledge MCP) Status vs. Codebase Reality**:

@@ -1,6 +1,6 @@
 # `dendrite-mcp-hub` Documentation Index
 
-This directory contains architectural boundary documentation and imported specifications for **`dendrite-mcp-hub`** (`dendrite.dev/mcphub`), the unified Model Context Protocol (MCP) host, IDE communication bridge, and upstream MCP connector hub in the Dendrite 5-repository decomposition (Pillar 5 / Pillar 9).
+This directory contains architectural boundary documentation and imported specifications for **`dendrite-mcp-hub`** (`github.com/yasuomaidana/dendrite-mcp-hub`), the unified Model Context Protocol (MCP) host, IDE communication bridge, and upstream MCP connector hub in the Dendrite 5-repository decomposition (Pillar 5 / Pillar 9).
 
 ## Repository Documentation
 

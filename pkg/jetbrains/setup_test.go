@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"Dendrite/pkg/jetbrains"
+	"github.com/yasuomaidana/dendrite-mcp-hub/pkg/jetbrains"
 )
 
 func TestSetupJetBrainsToolset_Full(t *testing.T) {

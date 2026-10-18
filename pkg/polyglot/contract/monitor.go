@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"Dendrite/pkg/jetbrains"
+	"github.com/yasuomaidana/dendrite-mcp-hub/pkg/jetbrains"
 )
 
 // ContractMonitor scans shared schema repositories and models across Quad-IDE projects.

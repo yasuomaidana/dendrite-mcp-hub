@@ -1,9 +1,9 @@
 package jetbrains
 
 import (
-	"Dendrite/pkg/fsutil"
 	"encoding/json"
 	"fmt"
+	"github.com/yasuomaidana/dendrite-mcp-hub/internal/fsutil"
 	"os"
 	"strings"
 )
@@ -11,7 +11,7 @@ import (
 // UpsertMCPServer writes entry under mcpServers[name] in the JSON file at path, preserving every
 // other top-level key and every other server entry byte-for-byte semantically (use map[string]json.RawMessage
 // at both levels). Creates parent dirs and the file if missing. Empty/whitespace file = empty object.
-// Invalid JSON -> error (do NOT overwrite). Atomic write via Dendrite/pkg/fsutil.WriteFileAtomic. Output indented 2 spaces + trailing newline.
+// Invalid JSON -> error (do NOT overwrite). Atomic write via internal/fsutil.WriteFileAtomic. Output indented 2 spaces + trailing newline.
 // Returns created=true when the file did not exist before.
 func UpsertMCPServer(path, name string, entry MCPServerEntry) (created bool, err error) {
 	if name == "" {

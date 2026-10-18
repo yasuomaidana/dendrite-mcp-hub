@@ -24,15 +24,22 @@ type ServerConfig struct {
 	Version string
 }
 
-// NewServer initializes an MCP server instance with Dendrite branding.
+// Default server identity reported by initialize when ServerConfig leaves it empty.
+const (
+	DefaultName    = "Dendrite MCP Hub"
+	DefaultVersion = "0.1.0"
+)
+
+// NewServer initializes an MCP server instance; empty config fields fall back to
+// DefaultName and DefaultVersion.
 func NewServer(cfg ServerConfig) *Server {
 	name := cfg.Name
 	if name == "" {
-		name = "Dendrite Control Plane MCP Server"
+		name = DefaultName
 	}
 	version := cfg.Version
 	if version == "" {
-		version = "0.1.0-alpha"
+		version = DefaultVersion
 	}
 
 	return &Server{
@@ -51,6 +58,19 @@ func (s *Server) RegisterTool(tool Tool, handler ToolHandler) {
 	defer s.mu.Unlock()
 	s.tools[tool.Name] = tool
 	s.handlers[tool.Name] = handler
+}
+
+// Handler returns the handler registered for the named tool.
+func (s *Server) Handler(name string) (ToolHandler, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	h, ok := s.handlers[name]
+	return h, ok
+}
+
+// Info returns the server identity reported by initialize.
+func (s *Server) Info() ServerInfo {
+	return s.info
 }
 
 // ListTools returns all registered tools.
