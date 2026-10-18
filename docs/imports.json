@@ -1,0 +1,17 @@
+[
+  "docs/architecture/2026-10-quality-audit-execution-plan.md",
+  "docs/features/FEAT-003-reverse-engineering-rea.md",
+  "docs/features/FEAT-014-jetbrains-ide-mcp-integration.md",
+  "docs/features/FEAT-028-local-agent-triage-gateway-token-efficiency.md",
+  "docs/features/FEAT-037-penpot-ui-documentation-mcp-integration.md",
+  "docs/features/FEAT-042-artifact-package-publisher-mcp.md",
+  "docs/features/FEAT-045-code-knowledge-mcp-graphify.md",
+  "docs/features/FEAT-046-multi-ide-plugins.md",
+  "docs/features/FEAT-100-multi-ide-ecosystem-support.md",
+  "docs/features/FEAT-101-personal-context-topic-memory-installer.md",
+  "docs/cli/mcp.md",
+  "docs/cli/jetbrains.md",
+  "docs/cli/canvas.md",
+  "docs/guides/jetbrains-mcp-and-agents-setup.md",
+  "docs/guides/using-dendrite-tools-with-jetbrains.md"
+]
