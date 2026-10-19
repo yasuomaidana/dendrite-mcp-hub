@@ -128,7 +128,7 @@ Every file listed below was verified by reading `/Users/yasuomaidana/GoLandProje
 
 ### MCP Tool Families: Hub Ownership vs. Control-Plane Boundary
 
-All 87 generated MCP tool reference docs under `Dendrite/docs/mcp/` are copied mechanically into `docs/imported/mcp/`. Below is the grouping of all registered tool families by prefix, showing which families belong natively in `dendrite-mcp-hub` vs. which families are **control-plane or sidecar domain tools** that should either remain registered in `dendrite-control` (using `github.com/yasuomaidana/dendrite-mcp-hub` as a library) or be proxied over RPC to prevent circular Go module dependencies:
+Only the reference docs of the hub-native tools are imported (listed in `docs/imports.json`, copied to `docs/imported/mcp/` by Dendrite's `scripts/sync_subproject_docs.py`). Each other tool's doc is imported by the repository that implements it, or stays in Dendrite (DEN-1018). Below is the grouping of all registered tool families by prefix, showing which families belong natively in `dendrite-mcp-hub` vs. which families are **control-plane or sidecar domain tools** that should either remain registered in `dendrite-control` (using `github.com/yasuomaidana/dendrite-mcp-hub` as a library) or be proxied over RPC to prevent circular Go module dependencies:
 
 | Tool Name Prefix / Family | Registered Tools in `pkg/mcpserver` | Target Owner | Boundary Recommendation |
 | :--- | :--- | :--- | :--- |
@@ -257,7 +257,7 @@ The following 15 documents in [`docs/imports.json`](imports.json) were verified 
 14. `docs/guides/jetbrains-mcp-and-agents-setup.md` — Provides the full setup guide and reference catalog of Dendrite MCP tools and JetBrains IDE configurations.
 15. `docs/guides/using-dendrite-tools-with-jetbrains.md` — Documents developer workflows combining the Dendrite MCP server (`pkg/mcpserver`) and reverse IDE bridge (`pkg/jetbrains`).
 
-*(Note: All 87 generated MCP tool reference files under `Dendrite/docs/mcp/*.md` are copied mechanically into `docs/imported/mcp/` by the orchestrator and intentionally omitted from `docs/imports.json`.)*
+*(Note: Only hub-native MCP tool reference docs are imported, and they are listed in `docs/imports.json` like every other import. The other tools' docs live with the repository that implements them (DEN-1018).)*
 
 ---
 
