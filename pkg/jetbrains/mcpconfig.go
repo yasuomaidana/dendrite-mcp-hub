@@ -3,9 +3,10 @@ package jetbrains
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/yasuomaidana/dendrite-mcp-hub/internal/fsutil"
 	"os"
 	"strings"
+
+	"github.com/yasuomaidana/dendrite-mcp-hub/internal/fsutil"
 )
 
 // UpsertMCPServer writes entry under mcpServers[name] in the JSON file at path, preserving every
@@ -66,23 +67,32 @@ func UpsertMCPServer(path, name string, entry MCPServerEntry) (created bool, err
 	}
 	servers[name] = json.RawMessage(entryBytes)
 
+	if err := writeMCPServers(path, topLevel, servers); err != nil {
+		return false, err
+	}
+
+	return created, nil
+}
+
+// writeMCPServers stores servers under mcpServers in topLevel and writes the file atomically.
+func writeMCPServers(path string, topLevel map[string]json.RawMessage, servers map[string]json.RawMessage) error {
 	serversBytes, err := json.Marshal(servers)
 	if err != nil {
-		return false, fmt.Errorf("failed to marshal mcpServers: %w", err)
+		return fmt.Errorf("failed to marshal mcpServers: %w", err)
 	}
 	topLevel["mcpServers"] = json.RawMessage(serversBytes)
 
 	out, err := json.MarshalIndent(topLevel, "", "  ")
 	if err != nil {
-		return false, fmt.Errorf("failed to serialize json: %w", err)
+		return fmt.Errorf("failed to serialize json: %w", err)
 	}
 	out = append(out, '\n')
 
 	if err := fsutil.WriteFileAtomic(path, out); err != nil {
-		return false, err
+		return err
 	}
 
-	return created, nil
+	return nil
 }
 
 // RemoveMCPServer deletes mcpServers[name]; missing file or name is not an error; returns whether something was removed.
@@ -140,19 +150,7 @@ func RemoveMCPServer(path, name string) (bool, error) {
 	}
 
 	delete(servers, name)
-	serversBytes, err := json.Marshal(servers)
-	if err != nil {
-		return false, fmt.Errorf("failed to marshal mcpServers: %w", err)
-	}
-	topLevel["mcpServers"] = json.RawMessage(serversBytes)
-
-	out, err := json.MarshalIndent(topLevel, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("failed to serialize json: %w", err)
-	}
-	out = append(out, '\n')
-
-	if err := fsutil.WriteFileAtomic(path, out); err != nil {
+	if err := writeMCPServers(path, topLevel, servers); err != nil {
 		return false, err
 	}
 
