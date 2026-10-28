@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yasuomaidana/dendrite-mcp-hub/pkg/jetbrains"
@@ -104,5 +105,21 @@ func TestSetupJetBrainsToolset_DefaultPaths(t *testing.T) {
 	}
 	if len(res.FilesCreated) != 1 {
 		t.Fatalf("expected 1 created file, got %d", len(res.FilesCreated))
+	}
+}
+
+func TestDefaultBinaryPathNeverInsideProject(t *testing.T) {
+	proj := t.TempDir()
+	res, err := jetbrains.SetupJetBrainsToolset(jetbrains.SetupOptions{ProjectDir: proj, ConfigureProjectMCP: true, GlobalAIPathOverride: filepath.Join(proj, "g.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res
+	if _, err := os.Stat(filepath.Join(proj, "bin")); err == nil {
+		t.Fatal("setup created or referenced a project-local bin/ directory")
+	}
+	data, _ := os.ReadFile(filepath.Join(proj, ".ai", "mcp", "mcp.json"))
+	if strings.Contains(string(data), filepath.Join(proj, "bin")) {
+		t.Fatalf("mcp.json points into the project bin/: %s", data)
 	}
 }

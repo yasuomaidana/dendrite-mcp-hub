@@ -3,6 +3,7 @@ package jetbrains
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -54,7 +55,7 @@ func SetupJetBrainsToolset(opts SetupOptions) (*SetupResult, error) {
 	}
 
 	if opts.BinaryPath == "" {
-		opts.BinaryPath = filepath.Join(absProjectDir, "bin", "dendrite")
+		opts.BinaryPath = defaultBinaryPath()
 	}
 
 	res := &SetupResult{
@@ -298,4 +299,23 @@ func getExternalToolsXML() string {
     </exec>
   </tool>
 </toolSet>`
+}
+
+// defaultBinaryPath returns the dendrite binary the generated MCP configs
+// should launch: the running executable, else the one on PATH, else the bare
+// name. It never points inside the target project, so setup cannot make the
+// project depend on (or be polluted by) a project-local bin/ directory.
+func defaultBinaryPath() string {
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		if strings.EqualFold(strings.TrimSuffix(filepath.Base(exe), ".exe"), "dendrite") {
+			return exe
+		}
+	}
+	if p, err := exec.LookPath("dendrite"); err == nil {
+		return p
+	}
+	return "dendrite"
 }
