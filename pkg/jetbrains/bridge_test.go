@@ -158,3 +158,71 @@ func TestBridge_EmptyAndFallbackContent(t *testing.T) {
 		t.Errorf("expected 0 lints, got %d", len(lints))
 	}
 }
+
+func TestBridge_AdditionalBranches(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Disconnected client causes CallTool errors in all Bridge methods
+	_, transport := newScriptedServer(t)
+	disconnectedClient, _ := jetbrains.NewClient(transport)
+	errBridge := jetbrains.NewBridge(disconnectedClient)
+
+	if err := errBridge.OpenFile(ctx, "main.go", 1, 1); err == nil {
+		t.Errorf("expected OpenFile error when disconnected")
+	}
+	if _, err := errBridge.GetFileProblems(ctx, "main.go"); err == nil {
+		t.Errorf("expected GetFileProblems error when disconnected")
+	}
+	if _, err := errBridge.SearchSymbol(ctx, "Sym"); err == nil {
+		t.Errorf("expected SearchSymbol error when disconnected")
+	}
+	if res, err := errBridge.BuildProject(ctx); err == nil || res == nil || res.Success {
+		t.Errorf("expected BuildProject error and Success=false when disconnected")
+	}
+	if _, err := errBridge.ExecuteRunConfiguration(ctx, "Run"); err == nil {
+		t.Errorf("expected ExecuteRunConfiguration error when disconnected")
+	}
+	if _, err := errBridge.LintFiles(ctx, []string{"main.go"}); err == nil {
+		t.Errorf("expected LintFiles error when disconnected")
+	}
+
+	// 2. Connected client returning empty content for GetFileProblems & ExecuteRunConfiguration,
+	// and invalid JSON for SearchSymbol & LintFiles
+	rt := &recordedTransport{
+		sendFn: func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+			if req.Method == "initialize" || req.Method == "notifications/initialized" {
+				return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"protocolVersion":"2024-11-05"}`)}, nil
+			}
+			paramsBytes, _ := json.Marshal(req.Params)
+			var callParams jetbrains.CallToolParams
+			_ = json.Unmarshal(paramsBytes, &callParams)
+			switch callParams.Name {
+			case "get_file_problems", "execute_run_configuration":
+				res := jetbrains.CallToolResult{Content: []jetbrains.ContentItem{}}
+				b, _ := json.Marshal(res)
+				return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: b}, nil
+			case "search_symbol", "lint_files":
+				res := jetbrains.CallToolResult{Content: []jetbrains.ContentItem{{Type: "text", Text: "not-json"}}}
+				b, _ := json.Marshal(res)
+				return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: b}, nil
+			}
+			return nil, errors.New("unexpected")
+		},
+	}
+	c, _ := jetbrains.NewClient(rt)
+	_, _ = c.Connect(ctx)
+	b := jetbrains.NewBridge(c)
+
+	if probs, err := b.GetFileProblems(ctx, "main.go"); err != nil || len(probs) != 0 {
+		t.Errorf("expected empty problems, got %+v, err=%v", probs, err)
+	}
+	if out, err := b.ExecuteRunConfiguration(ctx, "Run"); err != nil || out != "" {
+		t.Errorf("expected empty output, got %q, err=%v", out, err)
+	}
+	if syms, err := b.SearchSymbol(ctx, "Sym"); err != nil || len(syms) != 0 {
+		t.Errorf("expected empty symbols on non-JSON, got %+v, err=%v", syms, err)
+	}
+	if lints, err := b.LintFiles(ctx, []string{"main.go"}); err != nil || len(lints) != 0 {
+		t.Errorf("expected empty lints on non-JSON, got %+v, err=%v", lints, err)
+	}
+}

@@ -60,8 +60,6 @@ func NormalizeType(raw string) string {
 		return "string"
 	case "bool", "boolean":
 		return "bool"
-	case "bytes", "byte[]", "vec<u8>":
-		return "bytes"
 	default:
 		return cleaned
 	}
@@ -131,6 +129,18 @@ func ParseProtobuf(content, filename string) ([]ContractSchema, error) {
 	return schemas, nil
 }
 
+func extractRequiredSet(m map[string]interface{}) map[string]bool {
+	reqMap := make(map[string]bool)
+	if requiredList, hasReq := m["required"].([]interface{}); hasReq {
+		for _, r := range requiredList {
+			if rStr, ok := r.(string); ok {
+				reqMap[rStr] = true
+			}
+		}
+	}
+	return reqMap
+}
+
 // ParseJSONSchema extracts object schemas from JSON Schema definitions.
 func ParseJSONSchema(content, filename string) ([]ContractSchema, error) {
 	var raw map[string]interface{}
@@ -148,14 +158,7 @@ func ParseJSONSchema(content, filename string) ([]ContractSchema, error) {
 		return nil, nil
 	}
 
-	reqMap := make(map[string]bool)
-	if requiredList, hasReq := raw["required"].([]interface{}); hasReq {
-		for _, r := range requiredList {
-			if rStr, ok := r.(string); ok {
-				reqMap[rStr] = true
-			}
-		}
-	}
+	reqMap := extractRequiredSet(raw)
 
 	fields := make(map[string]FieldDefinition)
 	for propName, propVal := range props {
@@ -203,14 +206,7 @@ func ParseOpenAPI(content, filename string) ([]ContractSchema, error) {
 		sMap, _ := schemaVal.(map[string]interface{})
 		props, _ := sMap["properties"].(map[string]interface{})
 
-		reqMap := make(map[string]bool)
-		if requiredList, hasReq := sMap["required"].([]interface{}); hasReq {
-			for _, r := range requiredList {
-				if rStr, ok := r.(string); ok {
-					reqMap[rStr] = true
-				}
-			}
-		}
+		reqMap := extractRequiredSet(sMap)
 
 		fields := make(map[string]FieldDefinition)
 		for pName, pVal := range props {

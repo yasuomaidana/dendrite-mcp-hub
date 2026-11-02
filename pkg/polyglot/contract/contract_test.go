@@ -61,14 +61,29 @@ func TestDriftDetection(t *testing.T) {
 	if !report.HasErrors || report.TotalViolations == 0 {
 		t.Errorf("expected report to register errors")
 	}
+
+	// Test numeric promotions (int32<->int64 and float32<->float64)
+	numCan := contract.ContractSchema{
+		Name: "Num",
+		Fields: map[string]contract.FieldDefinition{
+			"i": {Name: "i", NormalizedType: "int32"},
+			"f": {Name: "f", NormalizedType: "float32"},
+		},
+	}
+	numCode := contract.ContractSchema{
+		Name: "Num",
+		Fields: map[string]contract.FieldDefinition{
+			"i": {Name: "i", NormalizedType: "int64"},
+			"f": {Name: "f", NormalizedType: "float64"},
+		},
+	}
+	if v := contract.CompareSchemas(numCan, numCode); len(v) != 0 {
+		t.Errorf("expected numeric promotions to be compatible, got %+v", v)
+	}
 }
 
 func TestContractMonitor_EndToEnd(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "monitor_test_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	schemaDir := filepath.Join(tmpDir, "proto")
 	goDir := filepath.Join(tmpDir, "backend")
@@ -83,17 +98,32 @@ func TestContractMonitor_EndToEnd(t *testing.T) {
 	goData := "package main\ntype Account struct {\n\tAccountID string `json:\"account_id\"`\n\tBalance int64 `json:\"balance\"`\n}\n"
 	_ = os.WriteFile(goFile, []byte(goData), 0644)
 
+	// Unreadable files in schemaDir and goDir to cover os.ReadFile error branches
+	unreadableSchema := filepath.Join(schemaDir, "unreadable.proto")
+	_ = os.WriteFile(unreadableSchema, []byte("message X {}"), 0000)
+	defer func() { _ = os.Chmod(unreadableSchema, 0644) }()
+
+	unreadableCode := filepath.Join(goDir, "unreadable.go")
+	_ = os.WriteFile(unreadableCode, []byte("package main"), 0000)
+	defer func() { _ = os.Chmod(unreadableCode, 0644) }()
+
 	monitor := contract.NewContractMonitor(nil)
 
-	// Clean match
+	// Clean match (including non-existent codeDir in map)
 	report, err := monitor.CheckDrift([]string{schemaDir}, map[contract.TargetLanguage]string{
-		contract.LangGo: goDir,
+		contract.LangGo:   goDir,
+		contract.LangRust: filepath.Join(tmpDir, "missing_rust"),
 	})
 	if err != nil {
 		t.Fatalf("check drift failed: %v", err)
 	}
 	if report.TotalViolations != 0 {
 		t.Errorf("expected 0 violations for clean match, got %d: %+v", report.TotalViolations, report.Violations)
+	}
+
+	// CheckDrift error when no schemas found
+	if _, err := monitor.CheckDrift([]string{filepath.Join(tmpDir, "missing")}, nil); !errors.Is(err, contract.ErrNoSchemasFound) {
+		t.Errorf("expected ErrNoSchemasFound from CheckDrift, got %v", err)
 	}
 
 	// Missing schemas error
@@ -107,19 +137,18 @@ func TestContractMonitor_EndToEnd(t *testing.T) {
 		t.Errorf("unexpected error on nil bridge notify: %v", err)
 	}
 
-	// Test NotifyIDE with mock bridge
-	fakeClient, _ := jetbrains.NewClient(nil)
-	fakeBridge := jetbrains.NewBridge(fakeClient)
-	fakeMonitor := contract.NewContractMonitor(fakeBridge)
-	_ = fakeMonitor.NotifyIDE(context.Background(), &contract.DriftReport{TotalViolations: 1})
+	// Test NotifyIDE with unconfigured bridge
+	emptyClient, _ := jetbrains.NewClient(nil)
+	emptyBridge := jetbrains.NewBridge(emptyClient)
+	emptyMonitor := contract.NewContractMonitor(emptyBridge)
+	_ = emptyMonitor.NotifyIDE(context.Background(), &contract.DriftReport{
+		TotalViolations: 1,
+		Violations:      []contract.DriftViolation{{SchemaName: "Account", TargetFile: "account.go"}},
+	})
 }
 
 func TestContractMonitor_QuadLanguageScan(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "monitor_quad_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	schemaDir := filepath.Join(tmpDir, "schemas")
 	_ = os.MkdirAll(schemaDir, 0755)
@@ -239,5 +268,19 @@ func TestContractMonitor_NotifyIDEWithHTTPTransport(t *testing.T) {
 
 	if err := monitor.NotifyIDE(context.Background(), report); err != nil {
 		t.Errorf("expected clean NotifyIDE with http transport: %v", err)
+	}
+}
+
+func TestCompareSchemasMatchesAFieldByItsNameWhenTheTagDiffers(t *testing.T) {
+	canonical := contract.ContractSchema{Name: "User", Fields: map[string]contract.FieldDefinition{
+		"user_id": {Name: "UserID", NormalizedType: "string", SerializationTag: "user_id"},
+	}}
+	model := contract.ContractSchema{Name: "User", Language: contract.LangGo, Fields: map[string]contract.FieldDefinition{
+		"userId": {Name: "userid", NormalizedType: "string", SerializationTag: "user_id"},
+	}}
+	for _, v := range contract.CompareSchemas(canonical, model) {
+		if v.Type == contract.DriftFieldMissing {
+			t.Fatalf("a field found by name was reported missing: %+v", v)
+		}
 	}
 }

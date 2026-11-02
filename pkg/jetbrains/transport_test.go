@@ -98,3 +98,80 @@ func TestStdioTransport_Echo(t *testing.T) {
 		t.Errorf("expected jsonrpc 2.0, got %s", resp.JSONRPC)
 	}
 }
+
+func TestHTTPTransport_AdditionalErrors(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. json.Marshal error (channel in Params)
+	tr := jetbrains.NewHTTPTransport("http://127.0.0.1:1", nil)
+	if _, err := tr.Send(ctx, &jetbrains.JSONRPCRequest{Params: make(chan int)}); err == nil {
+		t.Errorf("expected marshal error")
+	}
+
+	// 2. http.NewRequestWithContext error (invalid control char in URL)
+	badURLTr := jetbrains.NewHTTPTransport("http://\x7f", nil)
+	if _, err := badURLTr.Send(ctx, &jetbrains.JSONRPCRequest{JSONRPC: "2.0", Method: "x"}); err == nil {
+		t.Errorf("expected NewRequestWithContext error")
+	}
+
+	// 3. client.Do network error (canceled context)
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := tr.Send(cancelCtx, &jetbrains.JSONRPCRequest{JSONRPC: "2.0", Method: "x"}); err == nil {
+		t.Errorf("expected client.Do error on canceled context")
+	}
+
+	// 4. Invalid JSON response from HTTP server
+	badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("{not-json"))
+	}))
+	defer badServer.Close()
+	badJSONTr := jetbrains.NewHTTPTransport(badServer.URL, badServer.Client())
+	if _, err := badJSONTr.Send(ctx, &jetbrains.JSONRPCRequest{JSONRPC: "2.0", Method: "x"}); err == nil {
+		t.Errorf("expected decode error on invalid JSON response")
+	}
+}
+
+func TestStdioTransport_AdditionalErrors(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Non-existent binary fails cmd.Start()
+	if _, err := jetbrains.NewStdioTransport("/nonexistent-dendrite-binary-xyz"); err == nil {
+		t.Errorf("expected error starting nonexistent command")
+	}
+
+	// 2. Marshal error on Send
+	stdio, err := jetbrains.NewStdioTransport("cat")
+	if err != nil {
+		t.Fatalf("failed to start cat: %v", err)
+	}
+	if _, err := stdio.Send(ctx, &jetbrains.JSONRPCRequest{Params: make(chan int)}); err == nil {
+		t.Errorf("expected marshal error on StdioTransport.Send")
+	}
+
+	// 3. After Close(), stdin is closed -> Write error
+	_ = stdio.Close()
+	if _, err := stdio.Send(ctx, &jetbrains.JSONRPCRequest{JSONRPC: "2.0", Method: "x"}); err == nil {
+		t.Errorf("expected write error after Close")
+	}
+
+	// 4. Subprocess outputs non-JSON line -> Unmarshal error
+	badOut, err := jetbrains.NewStdioTransport("sh", "-c", "read line; echo not-json")
+	if err != nil {
+		t.Fatalf("failed to start sh: %v", err)
+	}
+	defer func() { _ = badOut.Close() }()
+	if _, err := badOut.Send(ctx, &jetbrains.JSONRPCRequest{JSONRPC: "2.0", Method: "x"}); err == nil {
+		t.Errorf("expected unmarshal error from non-JSON stdout")
+	}
+
+	// 5. Subprocess exits immediately without writing -> ReadBytes EOF error
+	eofProc, err := jetbrains.NewStdioTransport("true")
+	if err != nil {
+		t.Fatalf("failed to start true: %v", err)
+	}
+	defer func() { _ = eofProc.Close() }()
+	if _, err := eofProc.Send(ctx, &jetbrains.JSONRPCRequest{JSONRPC: "2.0", Method: "x"}); err == nil {
+		t.Errorf("expected EOF read error from true")
+	}
+}

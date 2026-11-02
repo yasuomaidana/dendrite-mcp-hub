@@ -97,67 +97,58 @@ func TestRemoveMCPServer_MissingFile(t *testing.T) {
 	}
 }
 
-func TestRemoveMCPServer_EmptyFile(t *testing.T) {
-	dir := t.TempDir()
-	targetPath := filepath.Join(dir, "empty.json")
-	if err := os.WriteFile(targetPath, []byte(""), 0644); err != nil {
-		t.Fatalf("failed to write file: %v", err)
+func TestRemoveMCPServer_NoOpContents(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"EmptyFile", ""},
+		{"NoMCPServersKey", `{"other": true}`},
+		{"NullMCPServersKey", `{"mcpServers": null}`},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			targetPath := filepath.Join(dir, "mcp.json")
+			if err := os.WriteFile(targetPath, []byte(tc.content), 0644); err != nil {
+				t.Fatalf("failed to write file: %v", err)
+			}
 
-	removed, err := RemoveMCPServer(targetPath, "serverA")
-	if err != nil {
-		t.Fatalf("RemoveMCPServer failed on empty file: %v", err)
-	}
-	if removed {
-		t.Fatalf("expected removed=false for empty file")
+			removed, err := RemoveMCPServer(targetPath, "serverA")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if removed {
+				t.Fatalf("expected removed=false")
+			}
+		})
 	}
 }
 
-func TestRemoveMCPServer_InvalidJSON(t *testing.T) {
-	dir := t.TempDir()
-	targetPath := filepath.Join(dir, "invalid.json")
-	if err := os.WriteFile(targetPath, []byte("{bad"), 0644); err != nil {
-		t.Fatalf("failed to write file: %v", err)
+func TestRemoveMCPServer_InvalidContents(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"InvalidJSON", "{bad"},
+		{"InvalidMCPServers", `{"mcpServers": 123}`},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			targetPath := filepath.Join(dir, "invalid.json")
+			if err := os.WriteFile(targetPath, []byte(tc.content), 0644); err != nil {
+				t.Fatalf("failed to write file: %v", err)
+			}
 
-	removed, err := RemoveMCPServer(targetPath, "serverA")
-	if err == nil {
-		t.Fatalf("expected error on invalid JSON")
-	}
-	if removed {
-		t.Fatalf("expected removed=false on error")
-	}
-}
-
-func TestRemoveMCPServer_InvalidMCPServers(t *testing.T) {
-	dir := t.TempDir()
-	targetPath := filepath.Join(dir, "invalid_servers.json")
-	if err := os.WriteFile(targetPath, []byte("{\"mcpServers\": 123}"), 0644); err != nil {
-		t.Fatalf("failed to write file: %v", err)
-	}
-
-	removed, err := RemoveMCPServer(targetPath, "serverA")
-	if err == nil {
-		t.Fatalf("expected error when mcpServers is invalid")
-	}
-	if removed {
-		t.Fatalf("expected removed=false on error")
-	}
-}
-
-func TestRemoveMCPServer_NoMCPServersKey(t *testing.T) {
-	dir := t.TempDir()
-	targetPath := filepath.Join(dir, "no_servers.json")
-	if err := os.WriteFile(targetPath, []byte("{\"other\": true}"), 0644); err != nil {
-		t.Fatalf("failed to write file: %v", err)
-	}
-
-	removed, err := RemoveMCPServer(targetPath, "serverA")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if removed {
-		t.Fatalf("expected removed=false")
+			removed, err := RemoveMCPServer(targetPath, "serverA")
+			if err == nil {
+				t.Fatalf("expected error on invalid content")
+			}
+			if removed {
+				t.Fatalf("expected removed=false on error")
+			}
+		})
 	}
 }
 
@@ -234,5 +225,70 @@ func TestConfigureMCPFile_RecordsCreatedVsUpdated(t *testing.T) {
 	}
 	if strings.Join(srv.Args, " ") != "inter serve" || len(srv.Env) != 0 {
 		t.Errorf("expected 'inter serve' with no env, got %v %v", srv.Args, srv.Env)
+	}
+
+	// 3. Error case: targetPath is a directory
+	if err := configureMCPFile(dir, "/bin/dendrite", res); err == nil {
+		t.Fatalf("expected configureMCPFile to fail when targetPath is a directory")
+	}
+}
+
+func TestMCPConfig_FilesystemErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	// Stat error (not IsNotExist): parent is a regular file
+	parentFile := filepath.Join(dir, "file_as_dir")
+	if err := os.WriteFile(parentFile, []byte("x"), 0644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	badStatPath := filepath.Join(parentFile, "mcp.json")
+	if _, err := UpsertMCPServer(badStatPath, "srv", MCPServerEntry{Command: "x"}); err == nil {
+		t.Errorf("expected stat error in UpsertMCPServer")
+	}
+	if _, err := RemoveMCPServer(badStatPath, "srv"); err == nil {
+		t.Errorf("expected stat error in RemoveMCPServer")
+	}
+
+	// ReadFile error: file with 0000 permissions
+	unreadable := filepath.Join(dir, "unreadable.json")
+	if err := os.WriteFile(unreadable, []byte("{}"), 0000); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	defer func() { _ = os.Chmod(unreadable, 0644) }()
+	if _, err := UpsertMCPServer(unreadable, "srv", MCPServerEntry{Command: "x"}); err == nil {
+		t.Errorf("expected read error in UpsertMCPServer")
+	}
+	if _, err := RemoveMCPServer(unreadable, "srv"); err == nil {
+		t.Errorf("expected read error in RemoveMCPServer")
+	}
+
+	// WriteFileAtomic error in UpsertMCPServer: read-only directory
+	roDir := filepath.Join(dir, "ro_upsert")
+	if err := os.MkdirAll(roDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.Chmod(roDir, 0555); err != nil {
+		t.Fatalf("chmod failed: %v", err)
+	}
+	defer func() { _ = os.Chmod(roDir, 0755) }()
+	if _, err := UpsertMCPServer(filepath.Join(roDir, "mcp.json"), "srv", MCPServerEntry{Command: "x"}); err == nil {
+		t.Errorf("expected write error in UpsertMCPServer on read-only dir")
+	}
+
+	// WriteFileAtomic error in RemoveMCPServer: file exists with server, then dir becomes read-only
+	roRemoveDir := filepath.Join(dir, "ro_remove")
+	if err := os.MkdirAll(roRemoveDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	roRemoveFile := filepath.Join(roRemoveDir, "mcp.json")
+	if err := os.WriteFile(roRemoveFile, []byte(`{"mcpServers":{"srv":{"command":"x"}}}`), 0644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if err := os.Chmod(roRemoveDir, 0555); err != nil {
+		t.Fatalf("chmod failed: %v", err)
+	}
+	defer func() { _ = os.Chmod(roRemoveDir, 0755) }()
+	if _, err := RemoveMCPServer(roRemoveFile, "srv"); err == nil {
+		t.Errorf("expected write error in RemoveMCPServer on read-only dir")
 	}
 }

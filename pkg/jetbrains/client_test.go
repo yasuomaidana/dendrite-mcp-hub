@@ -235,3 +235,113 @@ func TestClient_ToolExecutionFailure(t *testing.T) {
 		t.Errorf("expected ErrExecutionFailed, got: %v", err)
 	}
 }
+
+type recordedTransport struct {
+	sendFn  func(ctx context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error)
+	closeFn func() error
+}
+
+func (r *recordedTransport) Send(ctx context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+	return r.sendFn(ctx, req)
+}
+
+func (r *recordedTransport) Close() error {
+	if r.closeFn != nil {
+		return r.closeFn()
+	}
+	return nil
+}
+
+func TestClient_AdditionalErrorPaths(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Before connect, GetServerInfo and GetServerCapabilities return nil
+	rt := &recordedTransport{
+		sendFn: func(_ context.Context, _ *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+			return nil, errors.New("network failure")
+		},
+	}
+	c, err := jetbrains.NewClient(rt)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	if c.GetServerInfo() != nil {
+		t.Errorf("expected nil ServerInfo before Connect")
+	}
+	if c.GetServerCapabilities() != nil {
+		t.Errorf("expected nil ServerCapabilities before Connect")
+	}
+
+	// 2. Connect transport.Send error
+	if _, err := c.Connect(ctx); err == nil {
+		t.Errorf("expected Connect transport error")
+	}
+
+	// 3. Connect invalid JSON in Result
+	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{bad`)}, nil
+	}
+	if _, err := c.Connect(ctx); !errors.Is(err, jetbrains.ErrInvalidResponse) {
+		t.Errorf("expected ErrInvalidResponse on bad initialize JSON, got %v", err)
+	}
+
+	// Connect cleanly for subsequent method tests
+	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"protocolVersion":"2024-11-05"}`)}, nil
+	}
+	if _, err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	// 4. ListTools transport error and invalid JSON result
+	rt.sendFn = func(_ context.Context, _ *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return nil, errors.New("send failed")
+	}
+	if _, err := c.ListTools(ctx); err == nil {
+		t.Errorf("expected ListTools transport error")
+	}
+	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{bad`)}, nil
+	}
+	if _, err := c.ListTools(ctx); !errors.Is(err, jetbrains.ErrInvalidResponse) {
+		t.Errorf("expected ErrInvalidResponse on bad ListTools JSON, got %v", err)
+	}
+
+	// 5. CallTool transport error, non-32601 RPC error, invalid JSON result, IsError with empty content
+	rt.sendFn = func(_ context.Context, _ *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return nil, errors.New("send failed")
+	}
+	if _, err := c.CallTool(ctx, "x", nil); err == nil {
+		t.Errorf("expected CallTool transport error")
+	}
+	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return &jetbrains.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error:   &jetbrains.JSONRPCError{Code: -32000, Message: "server failure"},
+		}, nil
+	}
+	if _, err := c.CallTool(ctx, "x", nil); !errors.Is(err, jetbrains.ErrExecutionFailed) {
+		t.Errorf("expected ErrExecutionFailed on -32000, got %v", err)
+	}
+	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{bad`)}, nil
+	}
+	if _, err := c.CallTool(ctx, "x", nil); !errors.Is(err, jetbrains.ErrInvalidResponse) {
+		t.Errorf("expected ErrInvalidResponse on bad CallTool JSON, got %v", err)
+	}
+	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"isError":true}`)}, nil
+	}
+	if _, err := c.CallTool(ctx, "x", nil); !errors.Is(err, jetbrains.ErrExecutionFailed) {
+		t.Errorf("expected ErrExecutionFailed on empty IsError content, got %v", err)
+	}
+
+	// 6. Ping transport error
+	rt.sendFn = func(_ context.Context, _ *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return nil, errors.New("ping network down")
+	}
+	if _, err := c.Ping(ctx); err == nil {
+		t.Errorf("expected Ping transport error")
+	}
+}

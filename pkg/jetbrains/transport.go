@@ -84,15 +84,21 @@ type StdioTransport struct {
 	mu     sync.Mutex
 }
 
+// pipeStdin and pipeStdout open the subprocess pipes; tests replace them to make the pipes fail.
+var (
+	pipeStdin  = (*exec.Cmd).StdinPipe
+	pipeStdout = (*exec.Cmd).StdoutPipe
+)
+
 // NewStdioTransport starts an external command and creates a stdio JSON-RPC transport.
 func NewStdioTransport(command string, args ...string) (*StdioTransport, error) {
 	cmd := exec.Command(command, args...)
-	stdin, err := cmd.StdinPipe()
+	stdin, err := pipeStdin(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to pipe stdin: %w", err)
 	}
 
-	stdoutPipe, err := cmd.StdoutPipe()
+	stdoutPipe, err := pipeStdout(cmd)
 	if err != nil {
 		_ = stdin.Close()
 		return nil, fmt.Errorf("failed to pipe stdout: %w", err)

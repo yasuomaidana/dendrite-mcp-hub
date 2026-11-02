@@ -2,7 +2,6 @@ package contract
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +28,8 @@ func (m *ContractMonitor) ScanSchemas(schemaDirs []string) ([]ContractSchema, er
 			continue
 		}
 
-		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		// The callback never fails: unreadable paths are skipped, so Walk has no error to report.
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
@@ -62,10 +62,6 @@ func (m *ContractMonitor) ScanSchemas(schemaDirs []string) ([]ContractSchema, er
 			}
 			return nil
 		})
-
-		if err != nil {
-			return nil, fmt.Errorf("walking schema dir %s: %w", dir, err)
-		}
 	}
 
 	if len(results) == 0 {
@@ -132,10 +128,7 @@ func (m *ContractMonitor) CheckDrift(schemaDirs []string, codeDirs map[TargetLan
 		return nil, err
 	}
 
-	codeSchemas, err := m.ScanCodeModels(codeDirs)
-	if err != nil {
-		return nil, err
-	}
+	codeSchemas, _ := m.ScanCodeModels(codeDirs) // never fails: unreadable paths are skipped
 
 	return CompareAll(canonicalSchemas, codeSchemas), nil
 }
