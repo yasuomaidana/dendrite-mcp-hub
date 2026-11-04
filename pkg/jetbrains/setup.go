@@ -3,6 +3,7 @@ package jetbrains
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -38,23 +39,29 @@ type SetupResult struct {
 	ToolsAdded   []string `json:"tools_added"`
 }
 
+// getwd and absPath resolve the project directory; tests replace them to make resolution fail.
+var (
+	getwd   = os.Getwd
+	absPath = filepath.Abs
+)
+
 // SetupJetBrainsToolset configures JetBrains IDEs to natively recognize Dendrite MCP and autonomous agents.
 func SetupJetBrainsToolset(opts SetupOptions) (*SetupResult, error) {
 	if opts.ProjectDir == "" {
-		cwd, err := os.Getwd()
+		cwd, err := getwd()
 		if err != nil {
 			return nil, fmt.Errorf("failed to determine project directory: %w", err)
 		}
 		opts.ProjectDir = cwd
 	}
 
-	absProjectDir, err := filepath.Abs(opts.ProjectDir)
+	absProjectDir, err := absPath(opts.ProjectDir)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project directory path: %w", err)
 	}
 
 	if opts.BinaryPath == "" {
-		opts.BinaryPath = filepath.Join(absProjectDir, "bin", "dendrite")
+		opts.BinaryPath = defaultBinaryPath()
 	}
 
 	res := &SetupResult{
@@ -298,4 +305,26 @@ func getExternalToolsXML() string {
     </exec>
   </tool>
 </toolSet>`
+}
+
+// defaultBinaryPath returns the dendrite binary the generated MCP configs
+// should launch: the running executable, else the one on PATH, else the bare
+// name. It never points inside the target project, so setup cannot make the
+// project depend on (or be polluted by) a project-local bin/ directory.
+// currentExecutable names the running program; tests replace it.
+var currentExecutable = os.Executable
+
+func defaultBinaryPath() string {
+	if exe, err := currentExecutable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		if strings.EqualFold(strings.TrimSuffix(filepath.Base(exe), ".exe"), "dendrite") {
+			return exe
+		}
+	}
+	if p, err := exec.LookPath("dendrite"); err == nil {
+		return p
+	}
+	return "dendrite"
 }
