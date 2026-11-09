@@ -56,7 +56,7 @@ func (h *HTTPTransport) Send(ctx context.Context, req *JSONRPCRequest) (*JSONRPC
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute http request: %w", err)
 	}
-	defer httpRes.Body.Close()
+	defer func() { _ = httpRes.Body.Close() }()
 
 	if httpRes.StatusCode < 200 || httpRes.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpRes.Body)

@@ -221,28 +221,35 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 	if err != nil {
 		return nil, fmt.Errorf("tool call network failure: %w", err)
 	}
-
 	if resp.Error != nil {
-		if resp.Error.Code == -32601 {
-			return nil, fmt.Errorf("%w: %s", ErrToolNotFound, resp.Error.Message)
-		}
-		return nil, fmt.Errorf("%w: %s (code %d)", ErrExecutionFailed, resp.Error.Message, resp.Error.Code)
+		return nil, rpcToolError(resp.Error)
 	}
 
 	var callRes CallToolResult
 	if err := json.Unmarshal(resp.Result, &callRes); err != nil {
 		return nil, fmt.Errorf("%w: failed to decode tool result: %s", ErrInvalidResponse, err)
 	}
-
 	if callRes.IsError {
-		errMsg := "unknown tool execution error"
-		if len(callRes.Content) > 0 && callRes.Content[0].Text != "" {
-			errMsg = callRes.Content[0].Text
-		}
-		return &callRes, fmt.Errorf("%w: %s", ErrExecutionFailed, errMsg)
+		return &callRes, fmt.Errorf("%w: %s", ErrExecutionFailed, toolErrorText(callRes))
 	}
 
 	return &callRes, nil
+}
+
+// rpcToolError maps a JSON-RPC error object to the matching sentinel error.
+func rpcToolError(e *JSONRPCError) error {
+	if e.Code == -32601 {
+		return fmt.Errorf("%w: %s", ErrToolNotFound, e.Message)
+	}
+	return fmt.Errorf("%w: %s (code %d)", ErrExecutionFailed, e.Message, e.Code)
+}
+
+// toolErrorText extracts the failure message of a tool result flagged as an error.
+func toolErrorText(res CallToolResult) string {
+	if len(res.Content) > 0 && res.Content[0].Text != "" {
+		return res.Content[0].Text
+	}
+	return "unknown tool execution error"
 }
 
 // Ping measures roundtrip latency to the JetBrains MCP server.

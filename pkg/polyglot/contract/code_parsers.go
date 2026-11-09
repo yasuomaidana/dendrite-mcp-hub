@@ -5,270 +5,167 @@ import (
 	"strings"
 )
 
+var (
+	goStructRegex = regexp.MustCompile(`^\s*type\s+([A-Za-z0-9_]+)\s+struct\s*\{`)
+	goFieldRegex  = regexp.MustCompile(`^\s*([A-Za-z0-9_]+)\s+([*]?[A-Za-z0-9_\[\]]+)(\s+` + "`" + `([^` + "`" + `]+)` + "`" + `)?`)
+	goJSONTagRe   = regexp.MustCompile(`json:"([^",]+)`)
+
+	rustStructRegex = regexp.MustCompile(`^\s*(pub\s+)?struct\s+([A-Za-z0-9_]+)\s*\{`)
+	rustFieldRegex  = regexp.MustCompile(`^\s*(pub\s+)?([A-Za-z0-9_]+)\s*:\s*([^,;]+)`)
+	rustRenameRegex = regexp.MustCompile(`#\[serde\(rename\s*=\s*"([^"]+)"\)\]`)
+
+	tsInterfaceRegex = regexp.MustCompile(`^\s*(export\s+)?interface\s+([A-Za-z0-9_]+)\s*\{`)
+	tsFieldRegex     = regexp.MustCompile(`^\s*([A-Za-z0-9_]+)(\?)?:\s*([^;]+);?`)
+
+	pyClassRegex = regexp.MustCompile(`^\s*class\s+([A-Za-z0-9_]+)\((?:BaseModel|Schema)\):\s*`)
+	pyFieldRegex = regexp.MustCompile(`^\s*([A-Za-z0-9_]+)\s*:\s*([^=]+)(?:=\s*Field\([^)]*alias="([^"]+)"[^)]*\))?`)
+)
+
+// blockParser is a line-oriented scanner for languages that declare a named
+// block (struct, interface, class, message) containing one field per line.
+type blockParser struct {
+	comment string
+	tmpl    ContractSchema
+	begin   func(line string) (string, bool)
+	end     func(line, trimmed string) bool
+	field   func(line string, lineNo int) (string, FieldDefinition, bool)
+}
+
+func closeBrace(_, trimmed string) bool { return trimmed == "}" }
+
+func newField(name, rawType string, optional bool, tag string, lineNo int) FieldDefinition {
+	return FieldDefinition{
+		Name:             name,
+		NormalizedType:   NormalizeType(rawType),
+		RawType:          rawType,
+		Optional:         optional,
+		SerializationTag: tag,
+		LineNumber:       lineNo,
+	}
+}
+
+func (p blockParser) parse(content string) []ContractSchema {
+	var schemas []ContractSchema
+	var cur *ContractSchema
+
+	flush := func() {
+		if cur != nil {
+			schemas = append(schemas, *cur)
+			cur = nil
+		}
+	}
+
+	for i, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, p.comment) {
+			continue
+		}
+		if name, ok := p.begin(line); ok {
+			flush()
+			s := p.tmpl
+			s.Name = name
+			s.Fields = make(map[string]FieldDefinition)
+			cur = &s
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		if p.end(line, trimmed) {
+			flush()
+			continue
+		}
+		if key, def, ok := p.field(line, i+1); ok {
+			cur.Fields[key] = def
+		}
+	}
+	flush()
+	return schemas
+}
+
+func submatchBegin(re *regexp.Regexp, group int) func(string) (string, bool) {
+	return func(line string) (string, bool) {
+		m := re.FindStringSubmatch(line)
+		if len(m) <= group {
+			return "", false
+		}
+		return m[group], true
+	}
+}
+
+func goField(line string, lineNo int) (string, FieldDefinition, bool) {
+	m := goFieldRegex.FindStringSubmatch(line)
+	if len(m) <= 2 {
+		return "", FieldDefinition{}, false
+	}
+	name, rawType, tagContent := m[1], m[2], m[4]
+	tag := name
+	if j := goJSONTagRe.FindStringSubmatch(tagContent); len(j) > 1 {
+		tag = j[1]
+	}
+	optional := strings.HasPrefix(rawType, "*") || strings.Contains(tagContent, "omitempty")
+	return tag, newField(name, rawType, optional, tag, lineNo), true
+}
+
 // ParseGoStructs parses Go source files and extracts struct fields and `json:"..."` tags.
 func ParseGoStructs(content, filename string) ([]ContractSchema, error) {
-	lines := strings.Split(content, "\n")
-	var schemas []ContractSchema
-	var currentSchema *ContractSchema
-
-	structRegex := regexp.MustCompile(`^\s*type\s+([A-Za-z0-9_]+)\s+struct\s*\{`)
-	fieldRegex := regexp.MustCompile(`^\s*([A-Za-z0-9_]+)\s+([*]?[A-Za-z0-9_\[\]]+)(\s+` + "`" + `([^` + "`" + `]+)` + "`" + `)?`)
-	jsonTagRegex := regexp.MustCompile(`json:"([^",]+)`)
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "//") {
-			continue
-		}
-
-		if matches := structRegex.FindStringSubmatch(line); len(matches) > 1 {
-			if currentSchema != nil {
-				schemas = append(schemas, *currentSchema)
-			}
-			currentSchema = &ContractSchema{
-				Name:       matches[1],
-				Language:   LangGo,
-				SourceFile: filename,
-				Fields:     make(map[string]FieldDefinition),
-			}
-			continue
-		}
-
-		if currentSchema != nil && trimmed == "}" {
-			schemas = append(schemas, *currentSchema)
-			currentSchema = nil
-			continue
-		}
-
-		if currentSchema != nil {
-			if fMatches := fieldRegex.FindStringSubmatch(line); len(fMatches) > 2 {
-				name := fMatches[1]
-				rawType := fMatches[2]
-				tagContent := fMatches[4]
-
-				tag := name
-				if jMatches := jsonTagRegex.FindStringSubmatch(tagContent); len(jMatches) > 1 {
-					tag = jMatches[1]
-				}
-
-				isOptional := strings.HasPrefix(rawType, "*") || strings.Contains(tagContent, "omitempty")
-
-				currentSchema.Fields[tag] = FieldDefinition{
-					Name:             name,
-					NormalizedType:   NormalizeType(rawType),
-					RawType:          rawType,
-					Optional:         isOptional,
-					SerializationTag: tag,
-					LineNumber:       i + 1,
-				}
-			}
-		}
-	}
-
-	if currentSchema != nil {
-		schemas = append(schemas, *currentSchema)
-	}
-
-	return schemas, nil
+	return blockParser{"//", ContractSchema{Language: LangGo, SourceFile: filename}, submatchBegin(goStructRegex, 1), closeBrace, goField}.parse(content), nil
 }
 
 // ParseRustSerdeStructs parses Rust structs and extracts serde tags and types.
 func ParseRustSerdeStructs(content, filename string) ([]ContractSchema, error) {
-	lines := strings.Split(content, "\n")
-	var schemas []ContractSchema
-	var currentSchema *ContractSchema
-
-	structRegex := regexp.MustCompile(`^\s*(pub\s+)?struct\s+([A-Za-z0-9_]+)\s*\{`)
-	fieldRegex := regexp.MustCompile(`^\s*(pub\s+)?([A-Za-z0-9_]+)\s*:\s*([^,;]+)`)
-	serdeRenameRegex := regexp.MustCompile(`#\[serde\(rename\s*=\s*"([^"]+)"\)\]`)
-
 	pendingRename := ""
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "//") {
-			continue
+	field := func(line string, lineNo int) (string, FieldDefinition, bool) {
+		if s := rustRenameRegex.FindStringSubmatch(line); len(s) > 1 {
+			pendingRename = s[1]
+			return "", FieldDefinition{}, false
 		}
-
-		if sMatches := serdeRenameRegex.FindStringSubmatch(line); len(sMatches) > 1 {
-			pendingRename = sMatches[1]
-			continue
+		m := rustFieldRegex.FindStringSubmatch(line)
+		if len(m) <= 3 {
+			return "", FieldDefinition{}, false
 		}
-
-		if matches := structRegex.FindStringSubmatch(line); len(matches) > 2 {
-			if currentSchema != nil {
-				schemas = append(schemas, *currentSchema)
-			}
-			currentSchema = &ContractSchema{
-				Name:       matches[2],
-				Language:   LangRust,
-				SourceFile: filename,
-				Fields:     make(map[string]FieldDefinition),
-			}
-			continue
+		name, rawType := m[2], strings.TrimSpace(m[3])
+		tag := name
+		if pendingRename != "" {
+			tag, pendingRename = pendingRename, ""
 		}
-
-		if currentSchema != nil && trimmed == "}" {
-			schemas = append(schemas, *currentSchema)
-			currentSchema = nil
-			continue
-		}
-
-		if currentSchema != nil {
-			if fMatches := fieldRegex.FindStringSubmatch(line); len(fMatches) > 3 {
-				fieldName := fMatches[2]
-				rawType := strings.TrimSpace(fMatches[3])
-
-				tag := fieldName
-				if pendingRename != "" {
-					tag = pendingRename
-					pendingRename = ""
-				}
-
-				isOptional := strings.HasPrefix(rawType, "Option<")
-
-				currentSchema.Fields[tag] = FieldDefinition{
-					Name:             fieldName,
-					NormalizedType:   NormalizeType(rawType),
-					RawType:          rawType,
-					Optional:         isOptional,
-					SerializationTag: tag,
-					LineNumber:       i + 1,
-				}
-			}
-		}
+		return tag, newField(name, rawType, strings.HasPrefix(rawType, "Option<"), tag, lineNo), true
 	}
+	return blockParser{"//", ContractSchema{Language: LangRust, SourceFile: filename}, submatchBegin(rustStructRegex, 2), closeBrace, field}.parse(content), nil
+}
 
-	if currentSchema != nil {
-		schemas = append(schemas, *currentSchema)
+func tsField(line string, lineNo int) (string, FieldDefinition, bool) {
+	m := tsFieldRegex.FindStringSubmatch(line)
+	if len(m) <= 3 {
+		return "", FieldDefinition{}, false
 	}
-
-	return schemas, nil
+	name := m[1]
+	return name, newField(name, strings.TrimSpace(m[3]), m[2] == "?", name, lineNo), true
 }
 
 // ParseTypeScriptInterfaces extracts interface fields from TypeScript files.
 func ParseTypeScriptInterfaces(content, filename string) ([]ContractSchema, error) {
-	lines := strings.Split(content, "\n")
-	var schemas []ContractSchema
-	var currentSchema *ContractSchema
+	return blockParser{"//", ContractSchema{Language: LangTypeScript, SourceFile: filename}, submatchBegin(tsInterfaceRegex, 2), closeBrace, tsField}.parse(content), nil
+}
 
-	interfaceRegex := regexp.MustCompile(`^\s*(export\s+)?interface\s+([A-Za-z0-9_]+)\s*\{`)
-	fieldRegex := regexp.MustCompile(`^\s*([A-Za-z0-9_]+)(\?)?:\s*([^;]+);?`)
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "//") {
-			continue
-		}
-
-		if matches := interfaceRegex.FindStringSubmatch(line); len(matches) > 2 {
-			if currentSchema != nil {
-				schemas = append(schemas, *currentSchema)
-			}
-			currentSchema = &ContractSchema{
-				Name:       matches[2],
-				Language:   LangTypeScript,
-				SourceFile: filename,
-				Fields:     make(map[string]FieldDefinition),
-			}
-			continue
-		}
-
-		if currentSchema != nil && trimmed == "}" {
-			schemas = append(schemas, *currentSchema)
-			currentSchema = nil
-			continue
-		}
-
-		if currentSchema != nil {
-			if fMatches := fieldRegex.FindStringSubmatch(line); len(fMatches) > 3 {
-				name := fMatches[1]
-				isOptional := fMatches[2] == "?"
-				rawType := strings.TrimSpace(fMatches[3])
-
-				currentSchema.Fields[name] = FieldDefinition{
-					Name:             name,
-					NormalizedType:   NormalizeType(rawType),
-					RawType:          rawType,
-					Optional:         isOptional,
-					SerializationTag: name,
-					LineNumber:       i + 1,
-				}
-			}
-		}
+func pyField(line string, lineNo int) (string, FieldDefinition, bool) {
+	m := pyFieldRegex.FindStringSubmatch(line)
+	if len(m) <= 2 {
+		return "", FieldDefinition{}, false
 	}
-
-	if currentSchema != nil {
-		schemas = append(schemas, *currentSchema)
+	name, rawType := m[1], strings.TrimSpace(m[2])
+	tag := name
+	if len(m) > 3 && m[3] != "" {
+		tag = m[3]
 	}
+	return tag, newField(name, rawType, strings.HasPrefix(rawType, "Optional["), tag, lineNo), true
+}
 
-	return schemas, nil
+func pyDedent(line, trimmed string) bool {
+	return len(line) > 0 && line[0] != ' ' && line[0] != '\t' && trimmed != ""
 }
 
 // ParsePythonPydanticModels extracts Pydantic class models from Python files.
 func ParsePythonPydanticModels(content, filename string) ([]ContractSchema, error) {
-	lines := strings.Split(content, "\n")
-	var schemas []ContractSchema
-	var currentSchema *ContractSchema
-
-	classRegex := regexp.MustCompile(`^\s*class\s+([A-Za-z0-9_]+)\((?:BaseModel|Schema)\):\s*`)
-	fieldRegex := regexp.MustCompile(`^\s*([A-Za-z0-9_]+)\s*:\s*([^=]+)(?:=\s*Field\([^)]*alias="([^"]+)"[^)]*\))?`)
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-
-		if matches := classRegex.FindStringSubmatch(line); len(matches) > 1 {
-			if currentSchema != nil {
-				schemas = append(schemas, *currentSchema)
-			}
-			currentSchema = &ContractSchema{
-				Name:       matches[1],
-				Language:   LangPython,
-				SourceFile: filename,
-				Fields:     make(map[string]FieldDefinition),
-			}
-			continue
-		}
-
-		if currentSchema != nil && len(line) > 0 && line[0] != ' ' && line[0] != '\t' && trimmed != "" {
-			schemas = append(schemas, *currentSchema)
-			currentSchema = nil
-		}
-
-		if currentSchema != nil {
-			if fMatches := fieldRegex.FindStringSubmatch(line); len(fMatches) > 2 {
-				name := fMatches[1]
-				rawType := strings.TrimSpace(fMatches[2])
-				alias := ""
-				if len(fMatches) > 3 {
-					alias = fMatches[3]
-				}
-
-				tag := name
-				if alias != "" {
-					tag = alias
-				}
-
-				isOptional := strings.HasPrefix(rawType, "Optional[")
-
-				currentSchema.Fields[tag] = FieldDefinition{
-					Name:             name,
-					NormalizedType:   NormalizeType(rawType),
-					RawType:          rawType,
-					Optional:         isOptional,
-					SerializationTag: tag,
-					LineNumber:       i + 1,
-				}
-			}
-		}
-	}
-
-	if currentSchema != nil {
-		schemas = append(schemas, *currentSchema)
-	}
-
-	return schemas, nil
+	return blockParser{"#", ContractSchema{Language: LangPython, SourceFile: filename}, submatchBegin(pyClassRegex, 1), pyDedent, pyField}.parse(content), nil
 }

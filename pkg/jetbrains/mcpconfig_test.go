@@ -177,118 +177,119 @@ func TestRemoveMCPServer_DirectoryTargetError(t *testing.T) {
 func TestConfigureMCPFile_RecordsCreatedVsUpdated(t *testing.T) {
 	dir := t.TempDir()
 	targetPath := filepath.Join(dir, ".ai", "mcp", "mcp.json")
+	res := &SetupResult{FilesCreated: []string{}, FilesUpdated: []string{}}
 
-	res := &SetupResult{
-		FilesCreated: []string{},
-		FilesUpdated: []string{},
-	}
+	// First run creates the file
+	noErr(t, configureMCPFile(targetPath, "/bin/dendrite", res))
+	check(t, len(res.FilesCreated) == 1 && res.FilesCreated[0] == targetPath, "expected FilesCreated to have targetPath, got %+v", res.FilesCreated)
+	check(t, len(res.FilesUpdated) == 0, "expected FilesUpdated to be empty, got %+v", res.FilesUpdated)
 
-	// 1. First run creates the file
-	err := configureMCPFile(targetPath, "/bin/dendrite", res)
-	if err != nil {
-		t.Fatalf("first configureMCPFile failed: %v", err)
-	}
-	if len(res.FilesCreated) != 1 || res.FilesCreated[0] != targetPath {
-		t.Fatalf("expected FilesCreated to have targetPath, got %+v", res.FilesCreated)
-	}
-	if len(res.FilesUpdated) != 0 {
-		t.Fatalf("expected FilesUpdated to be empty, got %+v", res.FilesUpdated)
-	}
+	// Second run updates the file
+	noErr(t, configureMCPFile(targetPath, "/bin/dendrite", res))
+	check(t, len(res.FilesCreated) == 1, "FilesCreated should still have 1 entry, got %d", len(res.FilesCreated))
+	check(t, len(res.FilesUpdated) == 1 && res.FilesUpdated[0] == targetPath, "expected FilesUpdated to have targetPath, got %+v", res.FilesUpdated)
 
-	// 2. Second run updates the file
-	err = configureMCPFile(targetPath, "/bin/dendrite", res)
-	if err != nil {
-		t.Fatalf("second configureMCPFile failed: %v", err)
-	}
-	if len(res.FilesCreated) != 1 {
-		t.Fatalf("FilesCreated should still have 1 entry, got %d", len(res.FilesCreated))
-	}
-	if len(res.FilesUpdated) != 1 || res.FilesUpdated[0] != targetPath {
-		t.Fatalf("expected FilesUpdated to have targetPath, got %+v", res.FilesUpdated)
-	}
-
-	// Verify file content has dendrite server
-	data, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("failed to read mcp.json: %v", err)
-	}
+	// File content has the dendrite server
 	var cfg MCPConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("invalid json: %v", err)
-	}
-	srv, ok := cfg.MCPServers["dendrite"]
-	if !ok {
-		t.Fatalf("missing dendrite server in mcpServers")
-	}
-	if srv.Command != "/bin/dendrite" {
-		t.Errorf("expected command '/bin/dendrite', got '%s'", srv.Command)
-	}
-	if strings.Join(srv.Args, " ") != "inter serve" || len(srv.Env) != 0 {
-		t.Errorf("expected 'inter serve' with no env, got %v %v", srv.Args, srv.Env)
-	}
+	readJSONFile(t, targetPath, &cfg)
+	srv := cfg.MCPServers["dendrite"]
+	check(t, srv.Command == "/bin/dendrite", "expected command '/bin/dendrite', got '%s'", srv.Command)
+	check(t, strings.Join(srv.Args, " ") == "inter serve" && len(srv.Env) == 0, "expected 'inter serve' with no env, got %v %v", srv.Args, srv.Env)
 
-	// 3. Error case: targetPath is a directory
-	if err := configureMCPFile(dir, "/bin/dendrite", res); err == nil {
-		t.Fatalf("expected configureMCPFile to fail when targetPath is a directory")
-	}
+	// Error case: targetPath is a directory
+	wantErr(t, configureMCPFile(dir, "/bin/dendrite", res), "configureMCPFile to fail when targetPath is a directory")
 }
 
-func TestMCPConfig_FilesystemErrors(t *testing.T) {
+func TestMCPConfig_StatAndReadErrors(t *testing.T) {
 	dir := t.TempDir()
+	entry := MCPServerEntry{Command: "x"}
 
 	// Stat error (not IsNotExist): parent is a regular file
 	parentFile := filepath.Join(dir, "file_as_dir")
-	if err := os.WriteFile(parentFile, []byte("x"), 0644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
+	mustWrite(t, parentFile, "x", 0644)
 	badStatPath := filepath.Join(parentFile, "mcp.json")
-	if _, err := UpsertMCPServer(badStatPath, "srv", MCPServerEntry{Command: "x"}); err == nil {
-		t.Errorf("expected stat error in UpsertMCPServer")
-	}
-	if _, err := RemoveMCPServer(badStatPath, "srv"); err == nil {
-		t.Errorf("expected stat error in RemoveMCPServer")
-	}
+	_, err := UpsertMCPServer(badStatPath, "srv", entry)
+	wantErr(t, err, "stat error in UpsertMCPServer")
+	_, err = RemoveMCPServer(badStatPath, "srv")
+	wantErr(t, err, "stat error in RemoveMCPServer")
 
 	// ReadFile error: file with 0000 permissions
 	unreadable := filepath.Join(dir, "unreadable.json")
-	if err := os.WriteFile(unreadable, []byte("{}"), 0000); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-	defer func() { _ = os.Chmod(unreadable, 0644) }()
-	if _, err := UpsertMCPServer(unreadable, "srv", MCPServerEntry{Command: "x"}); err == nil {
-		t.Errorf("expected read error in UpsertMCPServer")
-	}
-	if _, err := RemoveMCPServer(unreadable, "srv"); err == nil {
-		t.Errorf("expected read error in RemoveMCPServer")
-	}
+	mustWrite(t, unreadable, "{}", 0000)
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0644) })
+	_, err = UpsertMCPServer(unreadable, "srv", entry)
+	wantErr(t, err, "read error in UpsertMCPServer")
+	_, err = RemoveMCPServer(unreadable, "srv")
+	wantErr(t, err, "read error in RemoveMCPServer")
+}
+
+func TestMCPConfig_WriteErrors(t *testing.T) {
+	dir := t.TempDir()
 
 	// WriteFileAtomic error in UpsertMCPServer: read-only directory
 	roDir := filepath.Join(dir, "ro_upsert")
-	if err := os.MkdirAll(roDir, 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	if err := os.Chmod(roDir, 0555); err != nil {
-		t.Fatalf("chmod failed: %v", err)
-	}
-	defer func() { _ = os.Chmod(roDir, 0755) }()
-	if _, err := UpsertMCPServer(filepath.Join(roDir, "mcp.json"), "srv", MCPServerEntry{Command: "x"}); err == nil {
-		t.Errorf("expected write error in UpsertMCPServer on read-only dir")
-	}
+	mustMkdir(t, roDir)
+	lockDir(t, roDir)
+	_, err := UpsertMCPServer(filepath.Join(roDir, "mcp.json"), "srv", MCPServerEntry{Command: "x"})
+	wantErr(t, err, "write error in UpsertMCPServer on read-only dir")
 
 	// WriteFileAtomic error in RemoveMCPServer: file exists with server, then dir becomes read-only
 	roRemoveDir := filepath.Join(dir, "ro_remove")
-	if err := os.MkdirAll(roRemoveDir, 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
+	mustMkdir(t, roRemoveDir)
 	roRemoveFile := filepath.Join(roRemoveDir, "mcp.json")
-	if err := os.WriteFile(roRemoveFile, []byte(`{"mcpServers":{"srv":{"command":"x"}}}`), 0644); err != nil {
-		t.Fatalf("write failed: %v", err)
+	mustWrite(t, roRemoveFile, `{"mcpServers":{"srv":{"command":"x"}}}`, 0644)
+	lockDir(t, roRemoveDir)
+	_, err = RemoveMCPServer(roRemoveFile, "srv")
+	wantErr(t, err, "write error in RemoveMCPServer on read-only dir")
+}
+
+// Assertion helpers keep test bodies free of branching.
+
+func check(t *testing.T, ok bool, format string, args ...interface{}) {
+	t.Helper()
+	if !ok {
+		t.Errorf(format, args...)
 	}
-	if err := os.Chmod(roRemoveDir, 0555); err != nil {
-		t.Fatalf("chmod failed: %v", err)
+}
+
+func noErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	defer func() { _ = os.Chmod(roRemoveDir, 0755) }()
-	if _, err := RemoveMCPServer(roRemoveFile, "srv"); err == nil {
-		t.Errorf("expected write error in RemoveMCPServer on read-only dir")
-	}
+}
+
+func wantErr(t *testing.T, err error, what string) {
+	t.Helper()
+	check(t, err != nil, "expected %s", what)
+}
+
+func mustWrite(t *testing.T, path, content string, perm os.FileMode) {
+	t.Helper()
+	noErr(t, os.WriteFile(path, []byte(content), perm))
+}
+
+func mustMkdir(t *testing.T, path string) {
+	t.Helper()
+	noErr(t, os.MkdirAll(path, 0755))
+}
+
+// lockDir makes dir read-only until the test ends.
+func lockDir(t *testing.T, dir string) {
+	t.Helper()
+	noErr(t, os.Chmod(dir, 0555))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
+}
+
+func decodeJSON(t *testing.T, data []byte, v interface{}) {
+	t.Helper()
+	noErr(t, json.Unmarshal(data, v))
+}
+
+func readJSONFile(t *testing.T, path string, v interface{}) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	noErr(t, err)
+	decodeJSON(t, data, v)
+	return data
 }

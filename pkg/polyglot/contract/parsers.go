@@ -9,124 +9,84 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var typeAliases = map[string]string{
+	"bytes": "bytes", "byte[]": "bytes", "vec<u8>": "bytes",
+	"int": "int32", "int32": "int32", "i32": "int32", "integer": "int32",
+	"int64": "int64", "i64": "int64", "long": "int64",
+	"float": "float32", "float32": "float32", "f32": "float32",
+	"double": "float64", "float64": "float64", "f64": "float64", "number": "float64",
+	"string": "string", "str": "string", "text": "string",
+	"bool": "bool", "boolean": "bool",
+}
+
+var (
+	arrayPrefixes = []string{"repeated ", "[]", "vec<", "list[", "array<"}
+	mapPrefixes   = []string{"map<", "map[", "dict[", "hashmap<"}
+	// wrapperAffixes maps an optional wrapper prefix to its closing suffix.
+	wrapperAffixes = [][2]string{{"option<", ">"}, {"optional[", "]"}}
+)
+
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// unwrapOptional returns the inner type of Option<T> / Optional[T].
+func unwrapOptional(s string) (string, bool) {
+	for _, w := range wrapperAffixes {
+		if strings.HasPrefix(s, w[0]) && strings.HasSuffix(s, w[1]) {
+			return s[len(w[0]) : len(s)-len(w[1])], true
+		}
+	}
+	return "", false
+}
+
 // NormalizeType standardizes type representations across Protobuf, OpenAPI, Go, Rust, TS, and Python.
 func NormalizeType(raw string) string {
-	cleaned := strings.ToLower(strings.TrimSpace(raw))
-	cleaned = strings.TrimPrefix(cleaned, "*") // Pointer in Go
+	cleaned := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(raw)), "*") // Pointer in Go
 
-	// Bytes check
 	if cleaned == "bytes" || cleaned == "byte[]" || cleaned == "vec<u8>" {
 		return "bytes"
 	}
-
-	// Array / Repeated / List checks
-	if strings.HasPrefix(cleaned, "repeated ") ||
-		strings.HasPrefix(cleaned, "[]") ||
-		strings.HasPrefix(cleaned, "vec<") ||
-		strings.HasPrefix(cleaned, "list[") ||
-		strings.HasPrefix(cleaned, "array<") ||
-		strings.HasSuffix(cleaned, "[]") {
+	if hasAnyPrefix(cleaned, arrayPrefixes) || strings.HasSuffix(cleaned, "[]") {
 		return "array"
 	}
-
-	// Map / Dictionary checks
-	if strings.HasPrefix(cleaned, "map<") ||
-		strings.HasPrefix(cleaned, "map[") ||
-		strings.HasPrefix(cleaned, "dict[") ||
-		strings.HasPrefix(cleaned, "hashmap<") {
+	if hasAnyPrefix(cleaned, mapPrefixes) {
 		return "map"
 	}
-
-	// Optional wrapper checks
-	if strings.HasPrefix(cleaned, "option<") && strings.HasSuffix(cleaned, ">") {
-		inner := cleaned[7 : len(cleaned)-1]
+	if inner, ok := unwrapOptional(cleaned); ok {
 		return NormalizeType(inner)
 	}
-	if strings.HasPrefix(cleaned, "optional[") && strings.HasSuffix(cleaned, "]") {
-		inner := cleaned[9 : len(cleaned)-1]
-		return NormalizeType(inner)
+	if canonical, ok := typeAliases[cleaned]; ok {
+		return canonical
 	}
+	return cleaned
+}
 
-	switch cleaned {
-	case "int", "int32", "i32", "integer":
-		return "int32"
-	case "int64", "i64", "long":
-		return "int64"
-	case "float", "float32", "f32":
-		return "float32"
-	case "double", "float64", "f64", "number":
-		return "float64"
-	case "string", "str", "text":
-		return "string"
-	case "bool", "boolean":
-		return "bool"
-	default:
-		return cleaned
+var (
+	protoMsgRegex   = regexp.MustCompile(`^\s*message\s+([A-Za-z0-9_]+)\s*\{`)
+	protoFieldRegex = regexp.MustCompile(`^\s*(optional\s+|repeated\s+)?([A-Za-z0-9_<>]+)\s+([A-Za-z0-9_]+)\s*=\s*\d+;`)
+)
+
+func protoField(line string, lineNo int) (string, FieldDefinition, bool) {
+	m := protoFieldRegex.FindStringSubmatch(line)
+	if len(m) <= 3 {
+		return "", FieldDefinition{}, false
 	}
+	modifier, rawType, name := strings.TrimSpace(m[1]), m[2], m[3]
+	if modifier == "repeated" {
+		rawType = "repeated " + rawType
+	}
+	return name, newField(name, rawType, modifier == "optional", name, lineNo), true
 }
 
 // ParseProtobuf extracts messages and field definitions from .proto files.
 func ParseProtobuf(content, filename string) ([]ContractSchema, error) {
-	lines := strings.Split(content, "\n")
-	var schemas []ContractSchema
-	var currentSchema *ContractSchema
-
-	msgRegex := regexp.MustCompile(`^\s*message\s+([A-Za-z0-9_]+)\s*\{`)
-	fieldRegex := regexp.MustCompile(`^\s*(optional\s+|repeated\s+)?([A-Za-z0-9_<>]+)\s+([A-Za-z0-9_]+)\s*=\s*\d+;`)
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "//") {
-			continue
-		}
-
-		if matches := msgRegex.FindStringSubmatch(line); len(matches) > 1 {
-			if currentSchema != nil {
-				schemas = append(schemas, *currentSchema)
-			}
-			currentSchema = &ContractSchema{
-				Name:       matches[1],
-				Type:       ContractProtobuf,
-				SourceFile: filename,
-				Fields:     make(map[string]FieldDefinition),
-			}
-			continue
-		}
-
-		if currentSchema != nil && trimmed == "}" {
-			schemas = append(schemas, *currentSchema)
-			currentSchema = nil
-			continue
-		}
-
-		if currentSchema != nil {
-			if fMatches := fieldRegex.FindStringSubmatch(line); len(fMatches) > 3 {
-				modifier := strings.TrimSpace(fMatches[1])
-				rawType := fMatches[2]
-				fieldName := fMatches[3]
-
-				isOptional := modifier == "optional"
-				if modifier == "repeated" {
-					rawType = "repeated " + rawType
-				}
-
-				currentSchema.Fields[fieldName] = FieldDefinition{
-					Name:             fieldName,
-					NormalizedType:   NormalizeType(rawType),
-					RawType:          rawType,
-					Optional:         isOptional,
-					SerializationTag: fieldName,
-					LineNumber:       i + 1,
-				}
-			}
-		}
-	}
-
-	if currentSchema != nil {
-		schemas = append(schemas, *currentSchema)
-	}
-
-	return schemas, nil
+	return blockParser{"//", ContractSchema{Type: ContractProtobuf, SourceFile: filename}, submatchBegin(protoMsgRegex, 1), closeBrace, protoField}.parse(content), nil
 }
 
 func extractRequiredSet(m map[string]interface{}) map[string]bool {
@@ -165,13 +125,7 @@ func ParseJSONSchema(content, filename string) ([]ContractSchema, error) {
 		propMap, _ := propVal.(map[string]interface{})
 		pType, _ := propMap["type"].(string)
 
-		fields[propName] = FieldDefinition{
-			Name:             propName,
-			NormalizedType:   NormalizeType(pType),
-			RawType:          pType,
-			Optional:         !reqMap[propName],
-			SerializationTag: propName,
-		}
+		fields[propName] = newField(propName, pType, !reqMap[propName], propName, 0)
 	}
 
 	return []ContractSchema{
@@ -182,6 +136,18 @@ func ParseJSONSchema(content, filename string) ([]ContractSchema, error) {
 			Fields:     fields,
 		},
 	}, nil
+}
+
+// openAPIRawType resolves an OpenAPI property's type, mapping integer formats to int32/int64.
+func openAPIRawType(prop map[string]interface{}) string {
+	rawT, _ := prop["type"].(string)
+	if rawT != "integer" {
+		return rawT
+	}
+	if format, _ := prop["format"].(string); format == "int64" {
+		return "int64"
+	}
+	return "int32"
 }
 
 // ParseOpenAPI extracts component schemas from OpenAPI 3.x specifications (JSON/YAML).
@@ -211,22 +177,7 @@ func ParseOpenAPI(content, filename string) ([]ContractSchema, error) {
 		fields := make(map[string]FieldDefinition)
 		for pName, pVal := range props {
 			pMap, _ := pVal.(map[string]interface{})
-			rawT, _ := pMap["type"].(string)
-			if rawT == "integer" {
-				if fmtStr, _ := pMap["format"].(string); fmtStr == "int64" {
-					rawT = "int64"
-				} else {
-					rawT = "int32"
-				}
-			}
-
-			fields[pName] = FieldDefinition{
-				Name:             pName,
-				NormalizedType:   NormalizeType(rawT),
-				RawType:          rawT,
-				Optional:         !reqMap[pName],
-				SerializationTag: pName,
-			}
+			fields[pName] = newField(pName, openAPIRawType(pMap), !reqMap[pName], pName, 0)
 		}
 
 		results = append(results, ContractSchema{

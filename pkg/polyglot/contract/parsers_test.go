@@ -135,6 +135,9 @@ func TestParseJSONSchema(t *testing.T) {
 		t.Errorf("expected id to be required")
 	}
 
+}
+
+func TestParseJSONSchema_Fallbacks(t *testing.T) {
 	// Untitled schema defaults to RootSchema
 	untitled, err := contract.ParseJSONSchema(`{"properties":{"x":{"type":"int"}}}`, "untitled.json")
 	if err != nil || len(untitled) != 1 || untitled[0].Name != "RootSchema" {
@@ -199,6 +202,9 @@ components:
 		t.Errorf("expected price float64, got %s", prod.Fields["price"].NormalizedType)
 	}
 
+}
+
+func TestParseOpenAPI_Fallbacks(t *testing.T) {
 	// Missing components or schemas
 	noComp, _ := contract.ParseOpenAPI("openapi: 3.0.0\n", "nocomp.yaml")
 	if len(noComp) != 0 {
@@ -210,13 +216,13 @@ components:
 	}
 
 	// Invalid YAML
-	_, err = contract.ParseOpenAPI(": bad yaml [", "bad.yaml")
+	_, err := contract.ParseOpenAPI(": bad yaml [", "bad.yaml")
 	if !errors.Is(err, contract.ErrInvalidSchemaContent) {
 		t.Errorf("expected ErrInvalidSchemaContent, got %v", err)
 	}
 }
 
-func TestParseCodeModels(t *testing.T) {
+func TestParseGoModels(t *testing.T) {
 	// 1. Go Struct (including unclosed struct before next struct and unclosed at EOF)
 	goCode := `
 package models
@@ -246,6 +252,9 @@ type EOFGo struct {
 		t.Errorf("expected pointer/omitempty to be optional")
 	}
 
+}
+
+func TestParseRustModels(t *testing.T) {
 	// 2. Rust Struct (including comment, unclosed before next, unclosed at EOF)
 	rsCode := `
 #[derive(Serialize, Deserialize)]
@@ -274,6 +283,9 @@ struct EOFRust {
 		t.Errorf("expected Option<String> to be optional")
 	}
 
+}
+
+func TestParseTypeScriptModels(t *testing.T) {
 	// 3. TypeScript Interface (including comment, unclosed before next, unclosed at EOF)
 	tsCode := `
 export interface User {
@@ -300,6 +312,9 @@ interface EOFTS {
 		t.Errorf("expected ? to be optional")
 	}
 
+}
+
+func TestParsePythonModels(t *testing.T) {
 	// 4. Python Pydantic Model (including comment, back-to-back classes, top-level statement after class)
 	pyCode := `
 from pydantic import BaseModel, Field

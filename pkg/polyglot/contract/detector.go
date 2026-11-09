@@ -5,90 +5,91 @@ import (
 	"strings"
 )
 
+func newViolation(canonical, model ContractSchema, field string, t DriftType, severity string) DriftViolation {
+	return DriftViolation{
+		SchemaName: canonical.Name,
+		FieldName:  field,
+		Type:       t,
+		Severity:   severity,
+		TargetLang: model.Language,
+		TargetFile: model.SourceFile,
+	}
+}
+
+// findModelField looks a field up by serialization tag, then by internal field name.
+func findModelField(model ContractSchema, tag string, canField FieldDefinition) (FieldDefinition, bool) {
+	if f, ok := model.Fields[tag]; ok {
+		return f, true
+	}
+	for _, mf := range model.Fields {
+		if strings.EqualFold(mf.Name, canField.Name) {
+			return mf, true
+		}
+	}
+	return FieldDefinition{}, false
+}
+
+func missingViolation(canonical, model ContractSchema, tag string, canField FieldDefinition) DriftViolation {
+	v := newViolation(canonical, model, tag, DriftFieldMissing, "ERROR")
+	v.Message = fmt.Sprintf("Required contract field '%s' in schema '%s' is missing in %s model", tag, canonical.Name, model.Language)
+	v.Expected = fmt.Sprintf("%s (%s)", tag, canField.NormalizedType)
+	v.Actual = "MISSING"
+	v.Line = 1
+	return v
+}
+
+func typeViolation(base DriftViolation, canField, modelField FieldDefinition) (DriftViolation, bool) {
+	if canField.NormalizedType == "" || modelField.NormalizedType == "" ||
+		typesCompatible(canField.NormalizedType, modelField.NormalizedType) {
+		return base, false
+	}
+	base.Type, base.Severity = DriftTypeMismatch, "ERROR"
+	base.Message = fmt.Sprintf("Type mismatch for field '%s' in %s model: expected '%s', got '%s'", base.FieldName, base.TargetLang, canField.NormalizedType, modelField.NormalizedType)
+	base.Expected, base.Actual, base.Line = canField.NormalizedType, modelField.NormalizedType, modelField.LineNumber
+	return base, true
+}
+
+func tagViolation(base DriftViolation, canField, modelField FieldDefinition) (DriftViolation, bool) {
+	if canField.SerializationTag == "" || modelField.SerializationTag == "" ||
+		canField.SerializationTag == modelField.SerializationTag {
+		return base, false
+	}
+	base.Type, base.Severity = DriftTagMismatch, "WARNING"
+	base.Message = fmt.Sprintf("Serialization wire tag mismatch for field '%s': contract expects '%s', code serializes as '%s'", base.FieldName, canField.SerializationTag, modelField.SerializationTag)
+	base.Expected, base.Actual, base.Line = canField.SerializationTag, modelField.SerializationTag, modelField.LineNumber
+	return base, true
+}
+
+// optionalViolation flags a field the schema requires but the model declares optional.
+func optionalViolation(base DriftViolation, canField, modelField FieldDefinition) (DriftViolation, bool) {
+	if canField.Optional || !modelField.Optional {
+		return base, false
+	}
+	base.Type, base.Severity = DriftOptionalError, "WARNING"
+	base.Message = fmt.Sprintf("Field '%s' is required by contract '%s' but marked optional in %s model", base.FieldName, base.SchemaName, base.TargetLang)
+	base.Expected, base.Actual, base.Line = "required", "optional", modelField.LineNumber
+	return base, true
+}
+
+var fieldChecks = []func(DriftViolation, FieldDefinition, FieldDefinition) (DriftViolation, bool){
+	typeViolation, tagViolation, optionalViolation,
+}
+
 // CompareSchemas evaluates drift between a canonical specification and an implementation model.
 func CompareSchemas(canonical ContractSchema, codeModel ContractSchema) []DriftViolation {
 	var violations []DriftViolation
 
-	for fieldTag, canField := range canonical.Fields {
-		modelField, exists := codeModel.Fields[fieldTag]
-		if !exists {
-			// Check if field was defined by internal struct name rather than serialization tag
-			foundByName := false
-			for _, mf := range codeModel.Fields {
-				if strings.EqualFold(mf.Name, canField.Name) {
-					foundByName = true
-					modelField = mf
-					break
-				}
-			}
-
-			if !foundByName {
-				violations = append(violations, DriftViolation{
-					SchemaName: canonical.Name,
-					FieldName:  fieldTag,
-					Type:       DriftFieldMissing,
-					Severity:   "ERROR",
-					TargetLang: codeModel.Language,
-					TargetFile: codeModel.SourceFile,
-					Message:    fmt.Sprintf("Required contract field '%s' in schema '%s' is missing in %s model", fieldTag, canonical.Name, codeModel.Language),
-					Expected:   fmt.Sprintf("%s (%s)", fieldTag, canField.NormalizedType),
-					Actual:     "MISSING",
-					Line:       1,
-				})
-				continue
-			}
+	for tag, canField := range canonical.Fields {
+		modelField, ok := findModelField(codeModel, tag, canField)
+		if !ok {
+			violations = append(violations, missingViolation(canonical, codeModel, tag, canField))
+			continue
 		}
-
-		// 1. Type Mismatch Check
-		if canField.NormalizedType != "" && modelField.NormalizedType != "" {
-			if !typesCompatible(canField.NormalizedType, modelField.NormalizedType) {
-				violations = append(violations, DriftViolation{
-					SchemaName: canonical.Name,
-					FieldName:  fieldTag,
-					Type:       DriftTypeMismatch,
-					Severity:   "ERROR",
-					TargetLang: codeModel.Language,
-					TargetFile: codeModel.SourceFile,
-					Message:    fmt.Sprintf("Type mismatch for field '%s' in %s model: expected '%s', got '%s'", fieldTag, codeModel.Language, canField.NormalizedType, modelField.NormalizedType),
-					Expected:   canField.NormalizedType,
-					Actual:     modelField.NormalizedType,
-					Line:       modelField.LineNumber,
-				})
+		base := newViolation(canonical, codeModel, tag, "", "")
+		for _, check := range fieldChecks {
+			if v, found := check(base, canField, modelField); found {
+				violations = append(violations, v)
 			}
-		}
-
-		// 2. Serialization Tag Discrepancy Check
-		if canField.SerializationTag != "" && modelField.SerializationTag != "" {
-			if canField.SerializationTag != modelField.SerializationTag {
-				violations = append(violations, DriftViolation{
-					SchemaName: canonical.Name,
-					FieldName:  fieldTag,
-					Type:       DriftTagMismatch,
-					Severity:   "WARNING",
-					TargetLang: codeModel.Language,
-					TargetFile: codeModel.SourceFile,
-					Message:    fmt.Sprintf("Serialization wire tag mismatch for field '%s': contract expects '%s', code serializes as '%s'", fieldTag, canField.SerializationTag, modelField.SerializationTag),
-					Expected:   canField.SerializationTag,
-					Actual:     modelField.SerializationTag,
-					Line:       modelField.LineNumber,
-				})
-			}
-		}
-
-		// 3. Optionality Check (Schema requires field, but model declares it optional)
-		if !canField.Optional && modelField.Optional {
-			violations = append(violations, DriftViolation{
-				SchemaName: canonical.Name,
-				FieldName:  fieldTag,
-				Type:       DriftOptionalError,
-				Severity:   "WARNING",
-				TargetLang: codeModel.Language,
-				TargetFile: codeModel.SourceFile,
-				Message:    fmt.Sprintf("Field '%s' is required by contract '%s' but marked optional in %s model", fieldTag, canonical.Name, codeModel.Language),
-				Expected:   "required",
-				Actual:     "optional",
-				Line:       modelField.LineNumber,
-			})
 		}
 	}
 
@@ -123,16 +124,20 @@ func CompareAll(canonicalSchemas []ContractSchema, codeSchemas []ContractSchema)
 	return report
 }
 
+func isIn(s string, set ...string) bool {
+	for _, x := range set {
+		if s == x {
+			return true
+		}
+	}
+	return false
+}
+
 func typesCompatible(expected, actual string) bool {
 	if expected == actual {
 		return true
 	}
-	// Allow numeric promotions if compatible
-	if (expected == "int32" || expected == "int64") && (actual == "int32" || actual == "int64") {
-		return true
-	}
-	if (expected == "float32" || expected == "float64") && (actual == "float32" || actual == "float64") {
-		return true
-	}
-	return false
+	// Allow numeric promotions within the integer and float families
+	return (isIn(expected, "int32", "int64") && isIn(actual, "int32", "int64")) ||
+		(isIn(expected, "float32", "float64") && isIn(actual, "float32", "float64"))
 }

@@ -4,129 +4,105 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/yasuomaidana/dendrite-mcp-hub/pkg/jetbrains"
 )
 
-func TestClient_Lifecycle_And_Tools(t *testing.T) {
-	ctx := context.Background()
+func connectedClient(t *testing.T) *jetbrains.Client {
+	t.Helper()
 	_, transport := newScriptedServer(t)
-
 	client, err := jetbrains.NewClient(transport,
 		jetbrains.WithClientInfo("test-agent", "1.0.0"),
 		jetbrains.WithProtocolVersion(jetbrains.DefaultProtocolVersion),
 	)
-	if err != nil {
-		t.Fatalf("unexpected error creating client: %v", err)
-	}
+	requireOK(t, err)
+	expect(t, !client.IsConnected(), "expected client to not be connected initially")
+	return client
+}
 
-	if client.IsConnected() {
-		t.Fatal("expected client to not be connected initially")
-	}
+func TestClient_Connect(t *testing.T) {
+	ctx := context.Background()
+	client := connectedClient(t)
 
-	// 1. Connect Handshake
 	initRes, err := client.Connect(ctx)
-	if err != nil {
-		t.Fatalf("connect failed: %v", err)
-	}
+	requireOK(t, err)
+	expect(t, client.IsConnected(), "expected client to be connected after Connect()")
+	expect(t, initRes.ProtocolVersion == jetbrains.DefaultProtocolVersion, "unexpected protocol version %s", initRes.ProtocolVersion)
+	info := client.GetServerInfo()
+	expect(t, info != nil && info.Name == "JetBrains GoLand MCP Server", "unexpected server info: %+v", info)
+	caps := client.GetServerCapabilities()
+	expect(t, caps != nil && caps.Tools != nil, "expected server capabilities to include tools")
 
-	if !client.IsConnected() {
-		t.Fatal("expected client to be connected after Connect()")
-	}
+	_, err = client.Connect(ctx)
+	requireIs(t, err, jetbrains.ErrAlreadyConnected)
+}
 
-	if initRes.ProtocolVersion != jetbrains.DefaultProtocolVersion {
-		t.Errorf("expected protocol version %s, got %s", jetbrains.DefaultProtocolVersion, initRes.ProtocolVersion)
-	}
+func TestClient_PingAndListTools(t *testing.T) {
+	ctx := context.Background()
+	client := connectedClient(t)
+	_, err := client.Connect(ctx)
+	requireOK(t, err)
 
-	if client.GetServerInfo() == nil || client.GetServerInfo().Name != "JetBrains GoLand MCP Server" {
-		t.Errorf("unexpected server info: %+v", client.GetServerInfo())
-	}
-
-	if client.GetServerCapabilities() == nil || client.GetServerCapabilities().Tools == nil {
-		t.Error("expected server capabilities to include tools")
-	}
-
-	// Connect again should return ErrAlreadyConnected
-	if _, err := client.Connect(ctx); !errors.Is(err, jetbrains.ErrAlreadyConnected) {
-		t.Errorf("expected ErrAlreadyConnected, got: %v", err)
-	}
-
-	// 2. Ping
 	latency, err := client.Ping(ctx)
-	if err != nil {
-		t.Fatalf("ping failed: %v", err)
-	}
-	if latency < 0 {
-		t.Errorf("invalid ping latency: %v", latency)
-	}
+	requireOK(t, err)
+	expect(t, latency >= 0, "invalid ping latency: %v", latency)
 
-	// 3. List Tools
 	tools, err := client.ListTools(ctx)
-	if err != nil {
-		t.Fatalf("list tools failed: %v", err)
-	}
-	if len(tools) == 0 {
-		t.Fatal("expected non-empty tool list")
-	}
-
-	foundOpen := false
+	requireOK(t, err)
+	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
-		if tool.Name == "open_file_in_editor" {
-			foundOpen = true
-			break
-		}
+		names = append(names, tool.Name)
 	}
-	if !foundOpen {
-		t.Error("expected 'open_file_in_editor' tool in list")
-	}
+	expect(t, slices.Contains(names, "open_file_in_editor"), "expected 'open_file_in_editor' tool in list, got %v", names)
+}
 
-	// 4. Call Tool - Happy Path
+func TestClient_CallTool(t *testing.T) {
+	ctx := context.Background()
+	client := connectedClient(t)
+	_, err := client.Connect(ctx)
+	requireOK(t, err)
+
 	callRes, err := client.CallTool(ctx, "open_file_in_editor", map[string]interface{}{
 		"file_path": "main.go",
 		"line":      10,
 	})
-	if err != nil {
-		t.Fatalf("call tool failed: %v", err)
-	}
-	if len(callRes.Content) == 0 || callRes.Content[0].Text != "File opened successfully" {
-		t.Errorf("unexpected call tool content: %+v", callRes.Content)
-	}
+	requireOK(t, err)
+	expect(t, len(callRes.Content) > 0 && callRes.Content[0].Text == "File opened successfully", "unexpected content: %+v", callRes.Content)
 
-	// 5. Call Tool - Unknown Tool
 	_, err = client.CallTool(ctx, "non_existent_tool", nil)
-	if !errors.Is(err, jetbrains.ErrToolNotFound) {
-		t.Errorf("expected ErrToolNotFound, got: %v", err)
-	}
-
-	// 6. Call Tool - Empty Name
+	requireIs(t, err, jetbrains.ErrToolNotFound)
 	_, err = client.CallTool(ctx, "", nil)
-	if !errors.Is(err, jetbrains.ErrEmptyToolName) {
-		t.Errorf("expected ErrEmptyToolName, got: %v", err)
-	}
+	requireIs(t, err, jetbrains.ErrEmptyToolName)
+}
 
-	// 7. Disconnect
-	if err := client.Disconnect(); err != nil {
-		t.Fatalf("disconnect failed: %v", err)
-	}
-	if client.IsConnected() {
-		t.Fatal("expected client to be disconnected")
-	}
+func TestClient_Disconnect(t *testing.T) {
+	ctx := context.Background()
+	client := connectedClient(t)
+	_, err := client.Connect(ctx)
+	requireOK(t, err)
 
-	// Double disconnect should be idempotent
-	if err := client.Disconnect(); err != nil {
-		t.Errorf("expected no error on duplicate disconnect, got: %v", err)
-	}
+	requireOK(t, client.Disconnect())
+	expect(t, !client.IsConnected(), "expected client to be disconnected")
+	requireOK(t, client.Disconnect()) // idempotent
 
-	// Operations after disconnect should fail
-	if _, err := client.ListTools(ctx); !errors.Is(err, jetbrains.ErrNotConnected) {
-		t.Errorf("expected ErrNotConnected, got: %v", err)
-	}
-	if _, err := client.CallTool(ctx, "open_file_in_editor", nil); !errors.Is(err, jetbrains.ErrNotConnected) {
-		t.Errorf("expected ErrNotConnected, got: %v", err)
-	}
-	if _, err := client.Ping(ctx); !errors.Is(err, jetbrains.ErrNotConnected) {
-		t.Errorf("expected ErrNotConnected, got: %v", err)
+	_, err = client.ListTools(ctx)
+	requireIs(t, err, jetbrains.ErrNotConnected)
+	_, err = client.CallTool(ctx, "open_file_in_editor", nil)
+	requireIs(t, err, jetbrains.ErrNotConnected)
+	_, err = client.Ping(ctx)
+	requireIs(t, err, jetbrains.ErrNotConnected)
+}
+
+// rpcErrorHandler answers every request with a JSON-RPC error.
+func rpcErrorHandler(code int, msg string) func(*jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+	return func(req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return &jetbrains.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error:   &jetbrains.JSONRPCError{Code: code, Message: msg},
+		}, nil
 	}
 }
 
@@ -138,30 +114,14 @@ func TestClient_NilTransport(t *testing.T) {
 }
 
 func TestClient_ErrorResponses(t *testing.T) {
-	ctx := context.Background()
 	srv, transport := newScriptedServer(t)
-
-	// Handler returning JSON-RPC error
-	srv.RegisterHandler("initialize", func(req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return &jetbrains.JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &jetbrains.JSONRPCError{
-				Code:    -32000,
-				Message: "handshake rejected",
-			},
-		}, nil
-	})
+	srv.RegisterHandler("initialize", rpcErrorHandler(-32000, "handshake rejected"))
 
 	client, err := jetbrains.NewClient(transport)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	requireOK(t, err)
 
-	_, err = client.Connect(ctx)
-	if !errors.Is(err, jetbrains.ErrInvalidResponse) {
-		t.Errorf("expected ErrInvalidResponse on handshake rejection, got: %v", err)
-	}
+	_, err = client.Connect(context.Background())
+	requireIs(t, err, jetbrains.ErrInvalidResponse)
 }
 
 func TestClient_ListTools_And_Ping_Errors(t *testing.T) {
@@ -169,42 +129,16 @@ func TestClient_ListTools_And_Ping_Errors(t *testing.T) {
 	srv, transport := newScriptedServer(t)
 
 	client, err := jetbrains.NewClient(transport)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	requireOK(t, err)
 	_, _ = client.Connect(ctx)
 
-	// ListTools returns JSON-RPC error
-	srv.RegisterHandler("tools/list", func(req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return &jetbrains.JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &jetbrains.JSONRPCError{
-				Code:    -32603,
-				Message: "failed listing tools",
-			},
-		}, nil
-	})
+	srv.RegisterHandler("tools/list", rpcErrorHandler(-32603, "failed listing tools"))
+	_, err = client.ListTools(ctx)
+	requireIs(t, err, jetbrains.ErrInvalidResponse)
 
-	if _, err := client.ListTools(ctx); !errors.Is(err, jetbrains.ErrInvalidResponse) {
-		t.Errorf("expected ErrInvalidResponse from ListTools error, got: %v", err)
-	}
-
-	// Ping returns JSON-RPC error
-	srv.RegisterHandler("ping", func(req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return &jetbrains.JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &jetbrains.JSONRPCError{
-				Code:    -32000,
-				Message: "ping failed",
-			},
-		}, nil
-	})
-
-	if _, err := client.Ping(ctx); !errors.Is(err, jetbrains.ErrInvalidResponse) {
-		t.Errorf("expected ErrInvalidResponse from Ping error, got: %v", err)
-	}
+	srv.RegisterHandler("ping", rpcErrorHandler(-32000, "ping failed"))
+	_, err = client.Ping(ctx)
+	requireIs(t, err, jetbrains.ErrInvalidResponse)
 }
 
 func TestClient_ToolExecutionFailure(t *testing.T) {
@@ -225,15 +159,11 @@ func TestClient_ToolExecutionFailure(t *testing.T) {
 	})
 
 	client, err := jetbrains.NewClient(transport)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	requireOK(t, err)
 	_, _ = client.Connect(ctx)
 
 	_, err = client.CallTool(ctx, "build_project", nil)
-	if !errors.Is(err, jetbrains.ErrExecutionFailed) {
-		t.Errorf("expected ErrExecutionFailed, got: %v", err)
-	}
+	requireIs(t, err, jetbrains.ErrExecutionFailed)
 }
 
 type recordedTransport struct {
@@ -252,96 +182,90 @@ func (r *recordedTransport) Close() error {
 	return nil
 }
 
-func TestClient_AdditionalErrorPaths(t *testing.T) {
-	ctx := context.Background()
+type sendFn = func(context.Context, *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error)
 
-	// 1. Before connect, GetServerInfo and GetServerCapabilities return nil
-	rt := &recordedTransport{
-		sendFn: func(_ context.Context, _ *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-			return nil, errors.New("network failure")
-		},
+func failWith(msg string) sendFn {
+	return func(context.Context, *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return nil, errors.New(msg)
 	}
+}
+
+func replyWith(result string) sendFn {
+	return func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(result)}, nil
+	}
+}
+
+func newRecordedClient(t *testing.T, fn sendFn) (*jetbrains.Client, *recordedTransport) {
+	t.Helper()
+	rt := &recordedTransport{sendFn: fn}
 	c, err := jetbrains.NewClient(rt)
-	if err != nil {
-		t.Fatalf("NewClient failed: %v", err)
-	}
-	if c.GetServerInfo() != nil {
-		t.Errorf("expected nil ServerInfo before Connect")
-	}
-	if c.GetServerCapabilities() != nil {
-		t.Errorf("expected nil ServerCapabilities before Connect")
-	}
+	requireOK(t, err)
+	return c, rt
+}
 
-	// 2. Connect transport.Send error
-	if _, err := c.Connect(ctx); err == nil {
-		t.Errorf("expected Connect transport error")
-	}
+func TestClient_ConnectErrorPaths(t *testing.T) {
+	ctx := context.Background()
+	c, rt := newRecordedClient(t, failWith("network failure"))
+	expect(t, c.GetServerInfo() == nil, "expected nil ServerInfo before Connect")
+	expect(t, c.GetServerCapabilities() == nil, "expected nil ServerCapabilities before Connect")
 
-	// 3. Connect invalid JSON in Result
-	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{bad`)}, nil
-	}
-	if _, err := c.Connect(ctx); !errors.Is(err, jetbrains.ErrInvalidResponse) {
-		t.Errorf("expected ErrInvalidResponse on bad initialize JSON, got %v", err)
-	}
+	_, err := c.Connect(ctx)
+	requireErr(t, err)
 
-	// Connect cleanly for subsequent method tests
-	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"protocolVersion":"2024-11-05"}`)}, nil
-	}
-	if _, err := c.Connect(ctx); err != nil {
-		t.Fatalf("Connect failed: %v", err)
-	}
+	rt.sendFn = replyWith(`{bad`)
+	_, err = c.Connect(ctx)
+	requireIs(t, err, jetbrains.ErrInvalidResponse)
+}
 
-	// 4. ListTools transport error and invalid JSON result
-	rt.sendFn = func(_ context.Context, _ *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return nil, errors.New("send failed")
-	}
-	if _, err := c.ListTools(ctx); err == nil {
-		t.Errorf("expected ListTools transport error")
-	}
-	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{bad`)}, nil
-	}
-	if _, err := c.ListTools(ctx); !errors.Is(err, jetbrains.ErrInvalidResponse) {
-		t.Errorf("expected ErrInvalidResponse on bad ListTools JSON, got %v", err)
-	}
+func TestClient_ListToolsErrorPaths(t *testing.T) {
+	ctx := context.Background()
+	c, rt := newRecordedClient(t, replyWith(`{"protocolVersion":"2024-11-05"}`))
+	_, err := c.Connect(ctx)
+	requireOK(t, err)
 
-	// 5. CallTool transport error, non-32601 RPC error, invalid JSON result, IsError with empty content
-	rt.sendFn = func(_ context.Context, _ *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return nil, errors.New("send failed")
-	}
-	if _, err := c.CallTool(ctx, "x", nil); err == nil {
-		t.Errorf("expected CallTool transport error")
-	}
-	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return &jetbrains.JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error:   &jetbrains.JSONRPCError{Code: -32000, Message: "server failure"},
-		}, nil
-	}
-	if _, err := c.CallTool(ctx, "x", nil); !errors.Is(err, jetbrains.ErrExecutionFailed) {
-		t.Errorf("expected ErrExecutionFailed on -32000, got %v", err)
-	}
-	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{bad`)}, nil
-	}
-	if _, err := c.CallTool(ctx, "x", nil); !errors.Is(err, jetbrains.ErrInvalidResponse) {
-		t.Errorf("expected ErrInvalidResponse on bad CallTool JSON, got %v", err)
-	}
-	rt.sendFn = func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"isError":true}`)}, nil
-	}
-	if _, err := c.CallTool(ctx, "x", nil); !errors.Is(err, jetbrains.ErrExecutionFailed) {
-		t.Errorf("expected ErrExecutionFailed on empty IsError content, got %v", err)
-	}
+	rt.sendFn = failWith("send failed")
+	_, err = c.ListTools(ctx)
+	requireErr(t, err)
 
-	// 6. Ping transport error
-	rt.sendFn = func(_ context.Context, _ *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
-		return nil, errors.New("ping network down")
+	rt.sendFn = replyWith(`{bad`)
+	_, err = c.ListTools(ctx)
+	requireIs(t, err, jetbrains.ErrInvalidResponse)
+}
+
+func TestClient_CallToolErrorPaths(t *testing.T) {
+	ctx := context.Background()
+	c, rt := newRecordedClient(t, replyWith(`{"protocolVersion":"2024-11-05"}`))
+	_, err := c.Connect(ctx)
+	requireOK(t, err)
+
+	cases := []struct {
+		name string
+		fn   sendFn
+		want error
+	}{
+		{"transport error", failWith("send failed"), nil},
+		{"non-32601 rpc error", func(_ context.Context, req *jetbrains.JSONRPCRequest) (*jetbrains.JSONRPCResponse, error) {
+			return &jetbrains.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &jetbrains.JSONRPCError{Code: -32000, Message: "server failure"}}, nil
+		}, jetbrains.ErrExecutionFailed},
+		{"invalid result json", replyWith(`{bad`), jetbrains.ErrInvalidResponse},
+		{"isError with empty content", replyWith(`{"isError":true}`), jetbrains.ErrExecutionFailed},
 	}
-	if _, err := c.Ping(ctx); err == nil {
-		t.Errorf("expected Ping transport error")
+	for _, tc := range cases {
+		rt.sendFn = tc.fn
+		_, err := c.CallTool(ctx, "x", nil)
+		requireErr(t, err)
+		expect(t, tc.want == nil || errors.Is(err, tc.want), "%s: expected %v, got %v", tc.name, tc.want, err)
 	}
+}
+
+func TestClient_PingTransportError(t *testing.T) {
+	ctx := context.Background()
+	c, rt := newRecordedClient(t, replyWith(`{"protocolVersion":"2024-11-05"}`))
+	_, err := c.Connect(ctx)
+	requireOK(t, err)
+
+	rt.sendFn = failWith("ping network down")
+	_, err = c.Ping(ctx)
+	requireErr(t, err)
 }

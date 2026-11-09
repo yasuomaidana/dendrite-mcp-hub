@@ -2,6 +2,7 @@ package jetbrains_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -196,4 +197,30 @@ func (s *scriptedServer) registerDefaultHandlers() {
 			Result:  resBytes,
 		}, nil
 	}
+}
+
+// Assertion helpers keep test bodies free of branching.
+
+func expect(t *testing.T, ok bool, format string, args ...interface{}) {
+	t.Helper()
+	if !ok {
+		t.Errorf(format, args...)
+	}
+}
+
+func requireOK(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func requireIs(t *testing.T, err, target error) {
+	t.Helper()
+	expect(t, errors.Is(err, target), "expected %v, got: %v", target, err)
+}
+
+func requireErr(t *testing.T, err error) {
+	t.Helper()
+	expect(t, err != nil, "expected an error")
 }

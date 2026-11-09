@@ -9,6 +9,52 @@ import (
 	"github.com/yasuomaidana/dendrite-mcp-hub/internal/fsutil"
 )
 
+// statConfig reports whether the config file exists; a directory in its place is an error.
+func statConfig(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if info.IsDir() {
+		return false, fmt.Errorf("%s is a directory", path)
+	}
+	return true, nil
+}
+
+// loadTopLevel reads the config into a raw top-level map; an empty file is an empty object.
+func loadTopLevel(path string) (map[string]json.RawMessage, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	topLevel := make(map[string]json.RawMessage)
+	if trimmed := strings.TrimSpace(string(data)); trimmed != "" {
+		if err := json.Unmarshal([]byte(trimmed), &topLevel); err != nil {
+			return nil, fmt.Errorf("invalid json in %s: %w", path, err)
+		}
+	}
+	if topLevel == nil {
+		topLevel = make(map[string]json.RawMessage)
+	}
+	return topLevel, nil
+}
+
+// decodeServers extracts mcpServers from topLevel; absent, empty or null yields an empty map.
+func decodeServers(topLevel map[string]json.RawMessage, path string) (map[string]json.RawMessage, error) {
+	servers := make(map[string]json.RawMessage)
+	raw := strings.TrimSpace(string(topLevel["mcpServers"]))
+	if raw == "" || raw == "null" {
+		return servers, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &servers); err != nil {
+		return nil, fmt.Errorf("invalid mcpServers in %s: %w", path, err)
+	}
+	return servers, nil
+}
+
 // UpsertMCPServer writes entry under mcpServers[name] in the JSON file at path, preserving every
 // other top-level key and every other server entry byte-for-byte semantically (use map[string]json.RawMessage
 // at both levels). Creates parent dirs and the file if missing. Empty/whitespace file = empty object.
@@ -19,43 +65,21 @@ func UpsertMCPServer(path, name string, entry MCPServerEntry) (created bool, err
 		return false, fmt.Errorf("server name cannot be empty")
 	}
 
-	created = false
-	info, statErr := os.Stat(path)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			created = true
-		} else {
-			return false, statErr
-		}
-	} else if info.IsDir() {
-		return false, fmt.Errorf("%s is a directory", path)
+	exists, err := statConfig(path)
+	if err != nil {
+		return false, err
 	}
 
 	topLevel := make(map[string]json.RawMessage)
-	if !created {
-		data, err := os.ReadFile(path)
-		if err != nil {
+	if exists {
+		if topLevel, err = loadTopLevel(path); err != nil {
 			return false, err
 		}
-		trimmed := strings.TrimSpace(string(data))
-		if trimmed != "" {
-			if err := json.Unmarshal([]byte(trimmed), &topLevel); err != nil {
-				return false, fmt.Errorf("invalid json in %s: %w", path, err)
-			}
-		}
-	}
-	if topLevel == nil {
-		topLevel = make(map[string]json.RawMessage)
 	}
 
-	servers := make(map[string]json.RawMessage)
-	if rawServers, exists := topLevel["mcpServers"]; exists {
-		trimmedServers := strings.TrimSpace(string(rawServers))
-		if trimmedServers != "" && trimmedServers != "null" {
-			if err := json.Unmarshal(rawServers, &servers); err != nil {
-				return false, fmt.Errorf("invalid mcpServers in %s: %w", path, err)
-			}
-		}
+	servers, err := decodeServers(topLevel, path)
+	if err != nil {
+		return false, err
 	}
 	entryBytes, _ := json.Marshal(entry) // plain strings, lists and maps of strings: cannot fail
 	servers[name] = json.RawMessage(entryBytes)
@@ -64,7 +88,7 @@ func UpsertMCPServer(path, name string, entry MCPServerEntry) (created bool, err
 		return false, err
 	}
 
-	return created, nil
+	return !exists, nil
 }
 
 // writeMCPServers stores servers under mcpServers in topLevel and writes the file atomically.
@@ -87,50 +111,23 @@ func RemoveMCPServer(path, name string) (bool, error) {
 		return false, nil
 	}
 
-	info, statErr := os.Stat(path)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			return false, nil
-		}
-		return false, statErr
-	}
-	if info.IsDir() {
-		return false, fmt.Errorf("%s is a directory", path)
+	exists, err := statConfig(path)
+	if err != nil || !exists {
+		return false, err
 	}
 
-	data, err := readFile(path)
+	topLevel, err := loadTopLevel(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) { // the file vanished after the stat
 			return false, nil
 		}
 		return false, err
 	}
 
-	trimmed := strings.TrimSpace(string(data))
-	if trimmed == "" {
-		return false, nil
+	servers, err := decodeServers(topLevel, path)
+	if err != nil {
+		return false, err
 	}
-
-	topLevel := make(map[string]json.RawMessage)
-	if err := json.Unmarshal([]byte(trimmed), &topLevel); err != nil {
-		return false, fmt.Errorf("invalid json in %s: %w", path, err)
-	}
-
-	rawServers, exists := topLevel["mcpServers"]
-	if !exists {
-		return false, nil
-	}
-
-	trimmedServers := strings.TrimSpace(string(rawServers))
-	if trimmedServers == "" || trimmedServers == "null" {
-		return false, nil
-	}
-
-	servers := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(rawServers, &servers); err != nil {
-		return false, fmt.Errorf("invalid mcpServers in %s: %w", path, err)
-	}
-
 	if _, ok := servers[name]; !ok {
 		return false, nil
 	}

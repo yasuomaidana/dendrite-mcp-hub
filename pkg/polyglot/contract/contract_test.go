@@ -284,3 +284,21 @@ func TestCompareSchemasMatchesAFieldByItsNameWhenTheTagDiffers(t *testing.T) {
 		}
 	}
 }
+
+func TestScanCodeModels_SkipsNonMatchingFiles(t *testing.T) {
+	dir := t.TempDir()
+	src := "type A struct {\n\tX string\n}\n"
+	for name, body := range map[string]string{"a.go": src, "a_test.go": src, "notes.txt": src} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	monitor := contract.NewContractMonitor(nil)
+	models, err := monitor.ScanCodeModels(map[contract.TargetLanguage]string{
+		contract.LangGo:                dir,
+		contract.TargetLanguage("zig"): dir,
+	})
+	if err != nil || len(models) != 1 {
+		t.Fatalf("expected only a.go to be parsed, got %d models (err=%v)", len(models), err)
+	}
+}

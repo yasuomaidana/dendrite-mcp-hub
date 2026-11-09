@@ -9,59 +9,24 @@ import (
 )
 
 func TestUpsertMCPServer_NewFile(t *testing.T) {
-	dir := t.TempDir()
-	targetPath := filepath.Join(dir, "sub", "mcp.json")
-
+	targetPath := filepath.Join(t.TempDir(), "sub", "mcp.json")
 	entry := MCPServerEntry{
 		Command: "/usr/local/bin/dendrite",
 		Args:    []string{"mcp", "serve"},
-		Env: map[string]string{
-			"DENDRITE_ENV": "development",
-		},
+		Env:     map[string]string{"DENDRITE_ENV": "development"},
 	}
 
 	created, err := UpsertMCPServer(targetPath, "dendrite", entry)
-	if err != nil {
-		t.Fatalf("expected UpsertMCPServer to succeed, got %v", err)
-	}
-	if !created {
-		t.Fatalf("expected created to be true for new file")
-	}
+	noErr(t, err)
+	check(t, created, "expected created to be true for new file")
 
-	data, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("failed to read created file: %v", err)
-	}
-	if !strings.HasSuffix(string(data), "\n") {
-		t.Errorf("expected trailing newline")
-	}
-
-	var topLevel map[string]json.RawMessage
-	if err := json.Unmarshal(data, &topLevel); err != nil {
-		t.Fatalf("invalid json: %v", err)
-	}
-	rawServers, ok := topLevel["mcpServers"]
-	if !ok {
-		t.Fatalf("missing mcpServers in topLevel")
-	}
-
-	var servers map[string]MCPServerEntry
-	if err := json.Unmarshal(rawServers, &servers); err != nil {
-		t.Fatalf("invalid servers: %v", err)
-	}
-	srv, ok := servers["dendrite"]
-	if !ok {
-		t.Fatalf("missing dendrite in servers")
-	}
-	if srv.Command != entry.Command {
-		t.Errorf("expected command %s, got %s", entry.Command, srv.Command)
-	}
-	if len(srv.Args) != len(entry.Args) || srv.Args[0] != "mcp" {
-		t.Errorf("unexpected args: %v", srv.Args)
-	}
-	if srv.Env["DENDRITE_ENV"] != "development" {
-		t.Errorf("unexpected env: %v", srv.Env)
-	}
+	var cfg MCPConfig
+	data := readJSONFile(t, targetPath, &cfg)
+	check(t, strings.HasSuffix(string(data), "\n"), "expected trailing newline")
+	srv := cfg.MCPServers["dendrite"]
+	check(t, srv.Command == entry.Command, "expected command %s, got %s", entry.Command, srv.Command)
+	check(t, len(srv.Args) == len(entry.Args) && srv.Args[0] == "mcp", "unexpected args: %v", srv.Args)
+	check(t, srv.Env["DENDRITE_ENV"] == "development", "unexpected env: %v", srv.Env)
 }
 
 func TestUpsertMCPServer_ExistingFile_CreatedFalse(t *testing.T) {
@@ -101,103 +66,44 @@ func TestUpsertMCPServer_ExistingFile_CreatedFalse(t *testing.T) {
 }
 
 func TestUpsertMCPServer_PreservesForeignServerAndTopLevelInputs(t *testing.T) {
-	dir := t.TempDir()
-	targetPath := filepath.Join(dir, "mcp.json")
-
-	initialJSON := `{
-  "inputs": {
-    "token_limit": 4000,
-    "mode": "auto"
-  },
+	targetPath := filepath.Join(t.TempDir(), "mcp.json")
+	mustWrite(t, targetPath, `{
+  "inputs": {"token_limit": 4000, "mode": "auto"},
   "mcpServers": {
-    "foreign-sse": {
-      "url": "http://x",
-      "type": "sse",
-      "headers": {
-        "Authorization": "Bearer token123"
-      }
-    }
+    "foreign-sse": {"url": "http://x", "type": "sse", "headers": {"Authorization": "Bearer token123"}}
   }
-}`
-	if err := os.WriteFile(targetPath, []byte(initialJSON), 0644); err != nil {
-		t.Fatalf("failed to write initial JSON: %v", err)
-	}
+}`, 0644)
 
-	newEntry := MCPServerEntry{
+	created, err := UpsertMCPServer(targetPath, "dendrite", MCPServerEntry{
 		Command: "/bin/dendrite",
 		Args:    []string{"mcp", "serve"},
-		Env: map[string]string{
-			"KEY": "VAL",
-		},
-	}
-
-	created, err := UpsertMCPServer(targetPath, "dendrite", newEntry)
-	if err != nil {
-		t.Fatalf("UpsertMCPServer failed: %v", err)
-	}
-	if created {
-		t.Fatalf("expected created to be false for existing file")
-	}
-
-	data, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("failed to read updated file: %v", err)
-	}
+		Env:     map[string]string{"KEY": "VAL"},
+	})
+	noErr(t, err)
+	check(t, !created, "expected created to be false for existing file")
 
 	var topLevel map[string]json.RawMessage
-	if err := json.Unmarshal(data, &topLevel); err != nil {
-		t.Fatalf("failed to parse top level: %v", err)
-	}
+	readJSONFile(t, targetPath, &topLevel)
 
-	// Verify top-level "inputs" key is intact
-	inputsRaw, ok := topLevel["inputs"]
-	if !ok {
-		t.Fatalf("top-level key 'inputs' was dropped")
+	// top-level "inputs" key is intact
+	var inputs struct {
+		Mode       string `json:"mode"`
+		TokenLimit int    `json:"token_limit"`
 	}
-	var inputsMap map[string]interface{}
-	if err := json.Unmarshal(inputsRaw, &inputsMap); err != nil {
-		t.Fatalf("failed to parse inputs: %v", err)
-	}
-	if inputsMap["mode"] != "auto" || int(inputsMap["token_limit"].(float64)) != 4000 {
-		t.Errorf("inputs content corrupted: %+v", inputsMap)
-	}
+	decodeJSON(t, topLevel["inputs"], &inputs)
+	check(t, inputs.Mode == "auto" && inputs.TokenLimit == 4000, "inputs content corrupted: %+v", inputs)
 
-	// Verify mcpServers has both "foreign-sse" and "dendrite"
-	serversRaw, ok := topLevel["mcpServers"]
-	if !ok {
-		t.Fatalf("missing mcpServers")
-	}
-	var serversMap map[string]json.RawMessage
-	if err := json.Unmarshal(serversRaw, &serversMap); err != nil {
-		t.Fatalf("failed to parse mcpServers: %v", err)
-	}
+	// mcpServers has both "foreign-sse" and "dendrite"
+	var servers map[string]json.RawMessage
+	decodeJSON(t, topLevel["mcpServers"], &servers)
 
-	foreignRaw, ok := serversMap["foreign-sse"]
-	if !ok {
-		t.Fatalf("foreign-sse server was dropped")
-	}
-	var foreignMap map[string]interface{}
-	if err := json.Unmarshal(foreignRaw, &foreignMap); err != nil {
-		t.Fatalf("failed to parse foreign server: %v", err)
-	}
-	if foreignMap["url"] != "http://x" {
-		t.Errorf("foreign server url lost or changed: %v", foreignMap["url"])
-	}
-	if foreignMap["type"] != "sse" {
-		t.Errorf("foreign server type lost or changed: %v", foreignMap["type"])
-	}
+	var foreign map[string]interface{}
+	decodeJSON(t, servers["foreign-sse"], &foreign)
+	check(t, foreign["url"] == "http://x" && foreign["type"] == "sse", "foreign server lost or changed: %v", foreign)
 
-	dendriteRaw, ok := serversMap["dendrite"]
-	if !ok {
-		t.Fatalf("dendrite server not found")
-	}
-	var dendriteEntry MCPServerEntry
-	if err := json.Unmarshal(dendriteRaw, &dendriteEntry); err != nil {
-		t.Fatalf("failed to parse dendrite entry: %v", err)
-	}
-	if dendriteEntry.Command != "/bin/dendrite" {
-		t.Errorf("unexpected dendrite command: %s", dendriteEntry.Command)
-	}
+	var dendrite MCPServerEntry
+	decodeJSON(t, servers["dendrite"], &dendrite)
+	check(t, dendrite.Command == "/bin/dendrite", "unexpected dendrite command: %s", dendrite.Command)
 }
 
 func TestUpsertMCPServer_EmptyAndWhitespaceFile(t *testing.T) {
