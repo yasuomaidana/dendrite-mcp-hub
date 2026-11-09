@@ -1,0 +1,61 @@
+# managed by dendrite — edit .github/dendrite/directives.toml
+name: Dendrite CI/CD
+
+on:
+  push:
+    branches: [ develop, main, "feature/**" ]
+  pull_request:
+    branches: [ develop, main, "feature/**" ]
+
+jobs:
+  quality:
+    name: Quality gates (loc, clones, complexity, structure)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache loom-gate
+        uses: actions/cache@v4
+        with:
+          path: '~/.cargo/bin/loom-gate'
+          key: 'loom-gate-${{ runner.os }}-${{ vars.LOOM_GATE_REF || ''develop'' }}'
+      - name: Install loom-gate
+        run: |
+          command -v loom-gate >/dev/null || cargo install --locked --git https://github.com/yasuomaidana/dendrite-rag-rs --branch "${{ vars.LOOM_GATE_REF || 'develop' }}" loom-gate
+      - name: 'Gate: loc'
+        run: |
+          loom-gate loc --format github
+      - name: 'Gate: clones'
+        run: |
+          loom-gate clones --format github
+      - name: 'Gate: complexity'
+        run: |
+          loom-gate complexity --format github
+      - name: 'Gate: structure'
+        run: |
+          loom-gate structure --format github
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Lint (golangci-lint, cyclomatic and cognitive limits from the directives)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+      - name: Test (race detector, coverage profile)
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+      - name: 'Coverage floor (>= 100%)'
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {sub("%","",$3); print $3}')
+          echo "Total statement coverage: ${total}%"
+          awk -v cov="$total" -v min=100 'BEGIN { if (cov+0 < min+0) { print "coverage " cov "% is below the required " min "%"; exit 1 } }'

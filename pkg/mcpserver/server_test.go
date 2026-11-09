@@ -64,7 +64,12 @@ func TestHandleRequestProtocol(t *testing.T) {
 		t.Fatalf("tools/list = %+v", resp)
 	}
 
-	resp = call(t, s, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo","arguments":{"msg":"hi"}}}`)
+}
+
+func TestHandleRequestToolCalls(t *testing.T) {
+	s := echoServer()
+
+	resp := call(t, s, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo","arguments":{"msg":"hi"}}}`)
 	if res, ok := resp.Result.(*CallToolResult); !ok || res.Content[0].Text != "hi" {
 		t.Fatalf("echo = %+v", resp)
 	}
@@ -72,6 +77,11 @@ func TestHandleRequestProtocol(t *testing.T) {
 	if res, ok := resp.Result.(CallToolResult); !ok || !res.IsError || !strings.Contains(res.Content[0].Text, "exploded") {
 		t.Fatalf("boom = %+v", resp)
 	}
+
+}
+
+func TestHandleRequestErrors(t *testing.T) {
+	s := echoServer()
 
 	for req, code := range map[string]int{
 		`{not json`: ErrCodeParseError,
@@ -120,3 +130,12 @@ func TestServeStdio(t *testing.T) {
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+func TestServeStdioEncodeError(t *testing.T) {
+	s := NewServer(ServerConfig{})
+	s.RegisterTool(Tool{Name: "bad", InputSchema: map[string]interface{}{"x": make(chan int)}}, nil)
+	err := s.ServeStdio(context.Background(), strings.NewReader(`{"id":1,"method":"tools/list"}`), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "failed to encode response") {
+		t.Fatalf("expected encode error, got %v", err)
+	}
+}

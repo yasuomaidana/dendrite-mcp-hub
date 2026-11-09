@@ -23,6 +23,32 @@ func (b *Bridge) GetClient() *Client {
 	return b.client
 }
 
+// firstText returns the text of the first content item, or "" when there is none.
+func firstText(res *CallToolResult) string {
+	if len(res.Content) == 0 {
+		return ""
+	}
+	return res.Content[0].Text
+}
+
+// decodeList decodes a JSON array; empty or non-JSON text yields an empty (non-nil) slice.
+func decodeList[T any](text string) []T {
+	var items []T
+	if text == "" || json.Unmarshal([]byte(text), &items) != nil {
+		return []T{}
+	}
+	return items
+}
+
+// callList calls an IDE tool whose text result is a JSON array of T.
+func callList[T any](ctx context.Context, b *Bridge, tool, what string, args map[string]interface{}) ([]T, error) {
+	res, err := b.client.CallTool(ctx, tool, args)
+	if err != nil {
+		return nil, fmt.Errorf("%s failed: %w", what, err)
+	}
+	return decodeList[T](firstText(res)), nil
+}
+
 // OpenFile instructs JetBrains IDE to open a file and place the cursor at line and column.
 func (b *Bridge) OpenFile(ctx context.Context, filePath string, line, col int) error {
 	if strings.TrimSpace(filePath) == "" {
@@ -63,12 +89,12 @@ func (b *Bridge) GetFileProblems(ctx context.Context, filePath string) ([]Proble
 		return nil, fmt.Errorf("get problems failed: %w", err)
 	}
 
-	if len(res.Content) == 0 || res.Content[0].Text == "" {
+	text := firstText(res)
+	if text == "" {
 		return []Problem{}, nil
 	}
 
 	var problems []Problem
-	text := res.Content[0].Text
 	if err := json.Unmarshal([]byte(text), &problems); err != nil {
 		// Non-JSON plain text fallback
 		return []Problem{
@@ -85,26 +111,7 @@ func (b *Bridge) GetFileProblems(ctx context.Context, filePath string) ([]Proble
 
 // SearchSymbol searches for functions, structs, interfaces, and variables across project PSI index.
 func (b *Bridge) SearchSymbol(ctx context.Context, query string) ([]Symbol, error) {
-	args := map[string]interface{}{
-		"query": query,
-	}
-
-	res, err := b.client.CallTool(ctx, "search_symbol", args)
-	if err != nil {
-		return nil, fmt.Errorf("search symbol failed: %w", err)
-	}
-
-	if len(res.Content) == 0 || res.Content[0].Text == "" {
-		return []Symbol{}, nil
-	}
-
-	var symbols []Symbol
-	text := res.Content[0].Text
-	if err := json.Unmarshal([]byte(text), &symbols); err != nil {
-		return []Symbol{}, nil
-	}
-
-	return symbols, nil
+	return callList[Symbol](ctx, b, "search_symbol", "search symbol", map[string]interface{}{"query": query})
 }
 
 // BuildProject triggers IDE background compilation and reports status.
@@ -150,24 +157,5 @@ func (b *Bridge) ExecuteRunConfiguration(ctx context.Context, configName string)
 
 // LintFiles lints multiple files using JetBrains inspections.
 func (b *Bridge) LintFiles(ctx context.Context, files []string) ([]Problem, error) {
-	args := map[string]interface{}{
-		"files": files,
-	}
-
-	res, err := b.client.CallTool(ctx, "lint_files", args)
-	if err != nil {
-		return nil, fmt.Errorf("lint files failed: %w", err)
-	}
-
-	if len(res.Content) == 0 || res.Content[0].Text == "" {
-		return []Problem{}, nil
-	}
-
-	var problems []Problem
-	text := res.Content[0].Text
-	if err := json.Unmarshal([]byte(text), &problems); err != nil {
-		return []Problem{}, nil
-	}
-
-	return problems, nil
+	return callList[Problem](ctx, b, "lint_files", "lint files", map[string]interface{}{"files": files})
 }

@@ -3,6 +3,7 @@ package jetbrains
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -38,23 +39,113 @@ type SetupResult struct {
 	ToolsAdded   []string `json:"tools_added"`
 }
 
+// getwd and absPath resolve the project directory; tests replace them to make resolution fail.
+var (
+	getwd   = os.Getwd
+	absPath = filepath.Abs
+)
+
+// record notes path as created or updated depending on whether it existed before.
+func (r *SetupResult) record(path string, existed bool) {
+	if existed {
+		r.FilesUpdated = append(r.FilesUpdated, path)
+	} else {
+		r.FilesCreated = append(r.FilesCreated, path)
+	}
+}
+
+// resolveProjectDir returns the absolute project directory, defaulting to the working directory.
+func resolveProjectDir(dir string) (string, error) {
+	if dir == "" {
+		cwd, err := getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to determine project directory: %w", err)
+		}
+		dir = cwd
+	}
+	abs, err := absPath(dir)
+	if err != nil {
+		return "", fmt.Errorf("invalid project directory path: %w", err)
+	}
+	return abs, nil
+}
+
+// globalMCPPath is where the application-level MCP configuration lives.
+func globalMCPPath(override string) (string, error) {
+	if override != "" {
+		return override, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to determine user home directory: %w", err)
+	}
+	return filepath.Join(home, ".ai", "mcp", "mcp.json"), nil
+}
+
+// configureGlobalMCP configures the global / application-level MCP file (~/.ai/mcp/mcp.json).
+func configureGlobalMCP(opts SetupOptions, res *SetupResult) error {
+	path, err := globalMCPPath(opts.GlobalAIPathOverride)
+	if err != nil {
+		return err
+	}
+	if err := configureMCPFile(path, opts.BinaryPath, res); err != nil {
+		return fmt.Errorf("failed to configure global MCP: %w", err)
+	}
+	return nil
+}
+
+// writeIDEFile writes content (trimmed, newline-terminated) and records it in res.
+func writeIDEFile(path, content string, res *SetupResult) error {
+	existed := fileExists(path)
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0644); err != nil {
+		return err
+	}
+	res.record(path, existed)
+	return nil
+}
+
+// writeRunConfigs generates the JetBrains Run Configurations (.idea/runConfigurations/).
+func writeRunConfigs(projectDir string, res *SetupResult) error {
+	dir := filepath.Join(projectDir, ".idea", "runConfigurations")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create runConfigurations dir: %w", err)
+	}
+	for name, xmlContent := range getRunConfigurationTemplates() {
+		if err := writeIDEFile(filepath.Join(dir, name), xmlContent, res); err != nil {
+			return fmt.Errorf("failed to write run configuration %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// writeExternalTools generates the JetBrains External Tools (.idea/tools/External_Tools.xml).
+func writeExternalTools(projectDir string, res *SetupResult) error {
+	dir := filepath.Join(projectDir, ".idea", "tools")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create tools dir: %w", err)
+	}
+	if err := writeIDEFile(filepath.Join(dir, "External_Tools.xml"), getExternalToolsXML(), res); err != nil {
+		return fmt.Errorf("failed to write external tools file: %w", err)
+	}
+	res.ToolsAdded = append(res.ToolsAdded,
+		"Dendrite: Run Local Agent Triage on Active File",
+		"Dendrite: Run Aider on Active File",
+		"Dendrite: Run Antigravity on Active File",
+		"Dendrite: Probe MCP Diagnostics",
+		"Dendrite: List Registered MCP Tools",
+		"Dendrite: Telemetry Snapshot",
+	)
+	return nil
+}
+
 // SetupJetBrainsToolset configures JetBrains IDEs to natively recognize Dendrite MCP and autonomous agents.
 func SetupJetBrainsToolset(opts SetupOptions) (*SetupResult, error) {
-	if opts.ProjectDir == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("failed to determine project directory: %w", err)
-		}
-		opts.ProjectDir = cwd
-	}
-
-	absProjectDir, err := filepath.Abs(opts.ProjectDir)
+	projectDir, err := resolveProjectDir(opts.ProjectDir)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project directory path: %w", err)
+		return nil, err
 	}
-
 	if opts.BinaryPath == "" {
-		opts.BinaryPath = filepath.Join(absProjectDir, "bin", "dendrite")
+		opts.BinaryPath = defaultBinaryPath()
 	}
 
 	res := &SetupResult{
@@ -63,78 +154,27 @@ func SetupJetBrainsToolset(opts SetupOptions) (*SetupResult, error) {
 		ToolsAdded:   []string{},
 	}
 
-	// 1. Project-level MCP configuration (.ai/mcp/mcp.json)
-	if opts.ConfigureProjectMCP {
-		projectMCPPath := filepath.Join(absProjectDir, ".ai", "mcp", "mcp.json")
-		if err := configureMCPFile(projectMCPPath, opts.BinaryPath, res); err != nil {
-			return nil, fmt.Errorf("failed to configure project MCP: %w", err)
-		}
-	}
-
-	// 2. Global / Application-level MCP configuration (~/.ai/mcp/mcp.json)
-	if opts.ConfigureGlobalMCP {
-		var globalMCPPath string
-		if opts.GlobalAIPathOverride != "" {
-			globalMCPPath = opts.GlobalAIPathOverride
-		} else {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return nil, fmt.Errorf("failed to determine user home directory: %w", err)
+	steps := []struct {
+		enabled bool
+		run     func() error
+	}{
+		{opts.ConfigureProjectMCP, func() error {
+			if err := configureMCPFile(filepath.Join(projectDir, ".ai", "mcp", "mcp.json"), opts.BinaryPath, res); err != nil {
+				return fmt.Errorf("failed to configure project MCP: %w", err)
 			}
-			globalMCPPath = filepath.Join(home, ".ai", "mcp", "mcp.json")
-		}
-		if err := configureMCPFile(globalMCPPath, opts.BinaryPath, res); err != nil {
-			return nil, fmt.Errorf("failed to configure global MCP: %w", err)
-		}
+			return nil
+		}},
+		{opts.ConfigureGlobalMCP, func() error { return configureGlobalMCP(opts, res) }},
+		{opts.ConfigureRunConfigs, func() error { return writeRunConfigs(projectDir, res) }},
+		{opts.ConfigureExternalTools, func() error { return writeExternalTools(projectDir, res) }},
 	}
-
-	// 3. JetBrains Run Configurations (.idea/runConfigurations/)
-	if opts.ConfigureRunConfigs {
-		runConfigDir := filepath.Join(absProjectDir, ".idea", "runConfigurations")
-		if err := os.MkdirAll(runConfigDir, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create runConfigurations dir: %w", err)
+	for _, step := range steps {
+		if !step.enabled {
+			continue
 		}
-
-		configs := getRunConfigurationTemplates()
-		for name, xmlContent := range configs {
-			path := filepath.Join(runConfigDir, name)
-			existed := fileExists(path)
-			if err := os.WriteFile(path, []byte(strings.TrimSpace(xmlContent)+"\n"), 0644); err != nil {
-				return nil, fmt.Errorf("failed to write run configuration %s: %w", name, err)
-			}
-			if existed {
-				res.FilesUpdated = append(res.FilesUpdated, path)
-			} else {
-				res.FilesCreated = append(res.FilesCreated, path)
-			}
+		if err := step.run(); err != nil {
+			return nil, err
 		}
-	}
-
-	// 4. JetBrains External Tools (.idea/tools/External_Tools.xml)
-	if opts.ConfigureExternalTools {
-		toolsDir := filepath.Join(absProjectDir, ".idea", "tools")
-		if err := os.MkdirAll(toolsDir, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create tools dir: %w", err)
-		}
-		toolsPath := filepath.Join(toolsDir, "External_Tools.xml")
-		existed := fileExists(toolsPath)
-		xmlContent := getExternalToolsXML()
-		if err := os.WriteFile(toolsPath, []byte(strings.TrimSpace(xmlContent)+"\n"), 0644); err != nil {
-			return nil, fmt.Errorf("failed to write external tools file: %w", err)
-		}
-		if existed {
-			res.FilesUpdated = append(res.FilesUpdated, toolsPath)
-		} else {
-			res.FilesCreated = append(res.FilesCreated, toolsPath)
-		}
-		res.ToolsAdded = append(res.ToolsAdded,
-			"Dendrite: Run Local Agent Triage on Active File",
-			"Dendrite: Run Aider on Active File",
-			"Dendrite: Run Antigravity on Active File",
-			"Dendrite: Probe MCP Diagnostics",
-			"Dendrite: List Registered MCP Tools",
-			"Dendrite: Telemetry Snapshot",
-		)
 	}
 
 	return res, nil
@@ -151,11 +191,7 @@ func configureMCPFile(targetPath, binaryPath string, res *SetupResult) error {
 		return err
 	}
 
-	if created {
-		res.FilesCreated = append(res.FilesCreated, targetPath)
-	} else {
-		res.FilesUpdated = append(res.FilesUpdated, targetPath)
-	}
+	res.record(targetPath, !created)
 	return nil
 }
 
@@ -298,4 +334,26 @@ func getExternalToolsXML() string {
     </exec>
   </tool>
 </toolSet>`
+}
+
+// defaultBinaryPath returns the dendrite binary the generated MCP configs
+// should launch: the running executable, else the one on PATH, else the bare
+// name. It never points inside the target project, so setup cannot make the
+// project depend on (or be polluted by) a project-local bin/ directory.
+// currentExecutable names the running program; tests replace it.
+var currentExecutable = os.Executable
+
+func defaultBinaryPath() string {
+	if exe, err := currentExecutable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		if strings.EqualFold(strings.TrimSuffix(filepath.Base(exe), ".exe"), "dendrite") {
+			return exe
+		}
+	}
+	if p, err := exec.LookPath("dendrite"); err == nil {
+		return p
+	}
+	return "dendrite"
 }
