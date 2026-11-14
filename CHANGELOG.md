@@ -5,7 +5,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ## [Unreleased]
 
 ### Added
-- CI: `.github/workflows/release-refs.yml` runs `scripts/check-release-refs.sh` on every pull request: a sibling module is required at a release tag, never a pseudo-version, a local `replace` or a moving branch (DMCP-33).
+- CI: `.github/workflows/release-refs.yml` runs `scripts/check-release-refs.sh` on every pull request, the same guard as the other Dendrite repositories (DMCP-33).
 - CI: `.github/workflows/complexity.yml` cross-checks function complexity with `gocyclo` and `gocognit`; report only while the debt (DMCP-28) is open (DMCP-27).
 
 ## [0.1.0]
