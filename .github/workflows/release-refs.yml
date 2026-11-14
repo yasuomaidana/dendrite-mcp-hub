@@ -1,0 +1,18 @@
+name: release refs
+
+# A final version references sibling repositories by tag, version or main, never by a moving
+# branch (scripts/check-release-refs.sh). Runs on every pull request, whatever its target, and on
+# pushes to main. Kept out of ci.yml, which dendrite generates.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  release-refs:
+    name: release refs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh scripts/tests/check-release-refs.test.sh
+      - run: sh scripts/check-release-refs.sh
