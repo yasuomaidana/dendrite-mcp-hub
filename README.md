@@ -22,3 +22,11 @@ go build ./... && go vet ./... && go test ./... -cover
 ```
 
 See [CHANGELOG.md](CHANGELOG.md) for what each release contains.
+
+## Release references
+
+A final version refers to its sibling projects by release tag, or by their `main` branch, never by `develop`, a
+`rev` or a bare git dependency. `scripts/check-release-refs.sh` (job `release refs`, on every pull request and on
+pushes to main) fails when a `Cargo.toml` git dependency has no `tag = "vX.Y.Z"` and is not on `branch = "main"`,
+when it names a `rev` or another branch, when a workflow checks out a `develop` ref, or when a Markdown file links
+to a `develop` branch. `scripts/tests/check-release-refs.test.sh` tests the guard with passing and failing fixtures.
