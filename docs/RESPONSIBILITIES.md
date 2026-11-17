@@ -18,14 +18,14 @@
 
 - **MCP JSON-RPC 2.0 Server & Tool Registry (`pkg/mcpserver`)**:
   - Protocol version `2024-11-05` lifecycle (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`), line-delimited stdio server (`ServeStdio` with 10 MB scanner buffer), and thread-safe tool registration (`RegisterTool`, `ListTools`, `HandleRequest`).
+  - Host-neutral helpers every tool package needs (DMCP-35): result builders (`TextResult`, `JsonResult`, `ErrorResult`, `ResultOrError`, `IndentJSON`), schema builders (`TypedProp`, `ListProp`, `PropsSchema`, `ObjectSchema`, `AddTool`), `FilterTools` (a server holding only the tools a host's predicate keeps, which is how Dendrite builds its `core` profile) and the read-only probe harness (`ProbeTools`, `ProbeOne`, `WriteProbeMatrix`). The host supplies the tool names and probe specs.
 - **JetBrains Reverse MCP Client, Bridge & IDE Provisioning (`pkg/jetbrains`)**:
   - Outbound MCP client (`Client`) over HTTP (`http://localhost:63342/api/mcp`) and stdio (`StdioTransport`).
   - High-level IDE `Bridge` (`OpenFile`, `GetFileProblems`, `SearchSymbol`, `BuildProject`, `ExecuteRunConfiguration`, `LintFiles`).
   - Zero-touch IDE toolset provisioning (`SetupJetBrainsToolset` generating `.ai/mcp/mcp.json`, `~/.ai/mcp/mcp.json`, `.idea/runConfigurations/*.xml`, and `.idea/tools/External_Tools.xml`).
 - **Cross-Language Schema & IPC Contract Drift Monitor (`pkg/polyglot/contract`)**:
   - Contract drift detection across Go, Rust, Python, and TypeScript schemas (`ContractMonitor.VerifyContracts`, `dendrite_contract_drift_check`) and automatic JetBrains IDE diagnostic navigation (`NotifyIDE`).
-- **Penpot MCP Upstream Integration & Design-Token Synchronization (`pkg/ui/penpot`, `pkg/personalcontext/canvas` bridge)**:
-  - Penpot UI component specification parsing, bidirectional token diff synthesis (`dendrite_ui_penpot_sync`), Canvas Penpot action dispatch (`dendrite_canvas_action_dispatch`, `dendrite_canvas_penpot_bridge`), and planned official Penpot MCP server proxy (`DEN-930`, `DEN-960`).
+- **Penpot MCP upstream proxy (planned, `DEN-930`, `DEN-960`)**: only the proxy to the official Penpot MCP server belongs here. The Penpot component parser and token diff (`pkg/ui/penpot`) and the Canvas bridge (`pkg/personalcontext/canvas`) stay in `dendrite-control`: they import its environment, Plane service and tracker packages, and this module must not import `dendrite-control`. The parser is moving onto the `dendrite-core-rs` AST (`ast.component_props`, DCORE-30, DEN-897).
 - **Upstream & Domain MCP Servers (Planned / In Extraction)**:
   - **Artifact & Package Publisher MCP (`pkg/mcp/publisher`, `internal/mcp/publisher`)**: Topological workspace publishing (`Cargo.toml`, `package.json`, `pyproject.toml`, Go tags), dry-run SemVer guard, secret-isolated execution gate, and `dendrite_publisher_*` tools (`DEN-091`, `DEN-092`, `DEN-093` — *planned / `To Do`*).
   - **Code Knowledge & Graphify MCP (`DEND-201`)**: Local AST and `.dendrite/knowledge.db` query server exposing `graphify.*` and `knowledge.*` MCP tools (*`To Verify` in Plane, not yet present in `pkg/mcpserver`*).

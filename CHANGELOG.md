@@ -5,6 +5,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ## [Unreleased]
 
 ### Added
+- `pkg/mcpserver`: host-neutral helpers moved from the Dendrite control repository: result builders (`TextResult`, `JsonResult`, `ErrorResult`, `ResultOrError`, `IndentJSON`), schema builders (`TypedProp`, `ListProp`, `PropsSchema`, `ObjectSchema`, `AddTool`), `FilterTools`, and the read-only probe harness (`ProbeTools`, `ProbeOne`, `WriteProbeMatrix`) (DMCP-35).
 - CI: `.github/workflows/release-refs.yml` runs `scripts/check-release-refs.sh` on every pull request, the same guard as the other Dendrite repositories (DMCP-33).
 - CI: `.github/workflows/complexity.yml` cross-checks function complexity with `gocyclo` and `gocognit`; report only while the debt (DMCP-28) is open (DMCP-27).
 
@@ -20,6 +21,7 @@ First release as a standalone module, `github.com/yasuomaidana/dendrite-mcp-hub`
 - CI quality workflow: no code file over 500 lines and no duplicated blocks (DMCP-11).
 
 ### Changed
+- `docs/RESPONSIBILITIES.md` no longer claims the Penpot parser: it stays in `dendrite-control` because it imports control packages; the hub owns only the planned Penpot MCP proxy (DMCP-35).
 - The default MCP binary written into IDE configuration is the running `dendrite` executable, never `<project>/bin/dendrite`.
 - The four Go files over the line limit were split (DMCP-11).
 - `pkg/jetbrains` and `pkg/polyglot/contract` reach 100% test coverage: repeated blocks were removed, error paths that cannot happen were dropped, and process-level calls (working directory, executable lookup, stdin and stdout) sit behind small seams so their failures are tested (DMCP-25).
