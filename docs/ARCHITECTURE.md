@@ -3,7 +3,7 @@
 `dendrite-mcp-hub` (`github.com/yasuomaidana/dendrite-mcp-hub`) is a Go library with three jobs:
 
 - an MCP server with a tool registry,
-- an MCP client and bridge into JetBrains IDEs,
+- a generic outbound MCP client (`pkg/mcpclient`) and a bridge into JetBrains IDEs built on it,
 - a cross-language contract drift monitor.
 
 It has no `main` package. Hosts (the `dendrite` CLI's `inter serve` command, IDE plugins) build a server, register tools and serve it.
@@ -19,16 +19,27 @@ It has no `main` package. Hosts (the `dendrite` CLI's `inter serve` command, IDE
 - **Transport:** `ServeStdio(ctx, in, out)` reads one JSON message per line (scanner buffer up to 10 MB for large tool arguments) and writes one response per line. Notifications get no response. It stops on EOF or context cancellation.
 - **Identity:** `ServerConfig{Name, Version}`, defaulting to `Dendrite MCP Hub` / `0.1.0`.
 
-## 2. JetBrains bridge: `pkg/jetbrains`
+## 2. Generic MCP client: `pkg/mcpclient`
 
-- **Transports:**
-  - `HTTPTransport` posts JSON-RPC to the IDE's built-in MCP server (`http://localhost:63342/api/mcp`, configurable).
-  - `StdioTransport` talks to a stdio MCP process.
-  - Both implement `Transport.Send(ctx, req) (resp, error)`.
+It speaks to any MCP server and knows nothing about JetBrains or any other one.
+
+- **Transports** implement `Transport{Send, Notify, Close}`. `Send` waits for the response with the same id; `Notify` writes a notification and returns, because a server never answers one.
+  - `HTTPTransport` posts JSON-RPC to a server's HTTP endpoint (default: the IDE's built-in `http://localhost:63342/api/mcp`).
+  - `StdioTransport` runs an MCP server as a subprocess:
+    - One reader goroutine routes each response to the call waiting for its id, so calls may overlap and answers may arrive in any order.
+    - Lines that are not responses (server notifications, server requests, log output on stdout) are skipped.
+    - A call ends with its context, or after `DefaultCallTimeout` (30 s) when the context has no deadline, or when the child exits. The error quotes the last 4 KB of the child's stderr.
+    - `Close` closes stdin, gives the child 2 s to leave, then kills it and always reaps it.
 - **Client:**
   - `NewClient(transport, WithClientInfo, WithProtocolVersion)`.
-  - `Connect` performs `initialize` + `notifications/initialized` and records server info and capabilities.
+  - `Connect` performs `initialize`, then sends `notifications/initialized` with `Notify` and records server info and capabilities. (Before DMCP-34 the notification went through `Send`, which waited for a reply a real server never sends, so the handshake hung.)
   - Also: `ListTools`, `CallTool(name, args)`, `Ping` (returns the round trip), `Disconnect`.
+- **Verified** against a real stdio MCP server built on `pkg/mcpserver`, and live against `engram mcp --tools=agent` (23 `mem_*` tools listed, `mem_context` answered).
+
+## 2a. JetBrains bridge: `pkg/jetbrains`
+
+`pkg/jetbrains` re-exports the client types from `pkg/mcpclient` (`NewClient` keeps the identity `dendrite-jetbrains-bridge`) and adds what is specific to the IDE:
+
 - **Bridge:** typed wrappers over the IDE's tools:
   - `OpenFile(path, line, col)`
   - `GetFileProblems(path) → []Problem`
@@ -59,7 +70,7 @@ Detects interface drift between a canonical schema and the data models that impl
 
 - Standard library only for the protocol core. No global state, so several servers can coexist in one process.
 - Tool handlers are supplied by the host. The hub never imports the host's packages, which keeps the module dependency one-way (host → hub).
-- Upstream MCP services (Penpot, Plane, Engram, disassembler bridges) are planned as additional clients alongside the JetBrains one, each behind the same `Transport` interface. Their tools are re-exported through the registry.
+- Upstream MCP services (Penpot, Plane, disassembler bridges) can be reached with `pkg/mcpclient`. Re-exporting an upstream's tools through the registry is not built. Engram is not an upstream: `dendrite soma install engram` registers `engram mcp --tools=agent` directly with Claude Code and Antigravity (DEN-427), which avoids one Engram subprocess per `inter serve` process.
 
 ## 5. Consumers and siblings
 
