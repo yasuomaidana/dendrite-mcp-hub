@@ -5,6 +5,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ## [Unreleased]
 
 ### Added
+- `docs/adr/0001-penpot-mcp-deployment.md`: the official Penpot MCP server works through a browser plugin and is not headless, so the hub's Penpot tools read the Penpot RPC API and the official server is an optional interactive upstream (DMCP #3).
 - `pkg/mcpclient`: generic outbound MCP client (stdio and HTTP transports, `Notify`, per-call timeouts, response matching by id, stderr in errors); `pkg/jetbrains` re-exports it (DMCP-34).
 - CI: `.github/workflows/release-refs.yml` runs `scripts/check-release-refs.sh` on every pull request, the same guard as the other Dendrite repositories (DMCP-33).
 - CI: `.github/workflows/complexity.yml` cross-checks function complexity with `gocyclo` and `gocognit`; report only while the debt (DMCP-28) is open (DMCP-27).
