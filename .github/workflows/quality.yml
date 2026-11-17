@@ -8,14 +8,14 @@ jobs:
     # No code file over 500 lines, tests included (Markdown and data are exempt).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: bash scripts/check-max-lines.sh
   duplicates:
     # No duplicated block of 15+ lines / 100+ tokens (.jscpd.json).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - run: npx --yes jscpd@4.0.5 --config .jscpd.json .
