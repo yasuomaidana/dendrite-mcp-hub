@@ -3,7 +3,7 @@
 `dendrite-mcp-hub` (`github.com/yasuomaidana/dendrite-mcp-hub`) is a Go library with three jobs:
 
 - an MCP server with a tool registry,
-- a generic outbound MCP client (`pkg/mcpclient`) and a bridge into JetBrains IDEs built on it,
+- a generic outbound MCP client (`pkg/mcpclient`, stdio and streamable HTTP), an HTTP server handler for the registry (`pkg/mcphttp`) and a bridge into JetBrains IDEs built on the client,
 - a cross-language contract drift monitor.
 
 It has no `main` package. Hosts (the `dendrite` CLI's `inter serve` command, IDE plugins) build a server, register tools and serve it.
@@ -35,6 +35,14 @@ It speaks to any MCP server and knows nothing about JetBrains or any other one.
   - `Connect` performs `initialize`, then sends `notifications/initialized` with `Notify` and records server info and capabilities. (Before DMCP-34 the notification went through `Send`, which waited for a reply a real server never sends, so the handshake hung.)
   - Also: `ListTools`, `CallTool(name, args)`, `Ping` (returns the round trip), `Disconnect`.
 - **Verified** against a real stdio MCP server built on `pkg/mcpserver`, and live against `engram mcp --tools=agent` (23 `mem_*` tools listed, `mem_context` answered).
+
+## 2b. Streamable HTTP: `pkg/mcphttp` and `StreamableHTTPTransport` (DMCP-37)
+
+The official [go-sdk](https://github.com/modelcontextprotocol/go-sdk) carries the streamable-HTTP transport of the MCP specification (sessions through `Mcp-Session-Id`, JSON or SSE answers, stream resumption, DNS-rebinding protection). The hand-rolled stdio server and client stay as they are; the go-sdk is used for HTTP only (decision of DEN-433).
+
+- **Server:** `mcphttp.Handler(srv, Options{JSONResponse})` returns an `http.Handler`. It builds a go-sdk server whose tools call the hub server's handlers, so every tool registered with `RegisterTool` is served over HTTP with the same behaviour as over stdio: a handler error becomes an `isError` result (`Tool error: ...`), image items travel as base64, and a schema root is always `{"type":"object"}`. Register every tool before calling `Handler`; tools added later are not served.
+- **Client:** `mcpclient.NewStreamableHTTPTransport(endpoint, httpClient)` implements `Transport` on the go-sdk client connection. As with `StdioTransport`, one reader goroutine matches each response to its call by id, so calls may overlap; a call ends with its context or after `DefaultCallTimeout`. `Close` ends the session (the go-sdk sends the DELETE) and wakes waiting calls with `ErrTransportClosed`; it returns after 2 s at the latest, even while the server is busy with a call.
+- **Tests:** the client and the server are tested against each other (both response modes), plus a lost session, timeouts, `Close` under a waiting call and a connection that dies.
 
 ## 2a. JetBrains bridge: `pkg/jetbrains`
 
