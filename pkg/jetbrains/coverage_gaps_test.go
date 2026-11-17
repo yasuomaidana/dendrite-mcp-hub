@@ -2,9 +2,7 @@ package jetbrains
 
 import (
 	"errors"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,17 +31,6 @@ func TestRemoveMCPServerReportsAnUnreadableFile(t *testing.T) {
 	}
 	if _, err := RemoveMCPServer(path, "a"); err == nil && os.Geteuid() != 0 {
 		t.Fatal("an unreadable file was reported as fine")
-	}
-}
-
-func TestDisconnectAndCloseTolerateMissingParts(t *testing.T) {
-	if err := (&Client{connected: true}).Disconnect(); err != nil {
-		t.Fatalf("Disconnect without a transport: %v", err)
-	}
-	for _, tr := range []*StdioTransport{{}, {cmd: &exec.Cmd{}}} {
-		if err := tr.Close(); err != nil {
-			t.Fatalf("Close = %v", err)
-		}
 	}
 }
 
@@ -81,19 +68,6 @@ func TestDefaultBinaryPathPrefersTheRunningDendrite(t *testing.T) {
 	want, _ := filepath.EvalSymlinks(exe)
 	if got := defaultBinaryPath(); got != want {
 		t.Fatalf("defaultBinaryPath = %q, want %q", got, want)
-	}
-}
-
-func TestNewStdioTransportReportsPipeFailures(t *testing.T) {
-	boom := errors.New("pipe failed")
-	swap(t, &pipeStdin, func(*exec.Cmd) (io.WriteCloser, error) { return nil, boom })
-	if _, err := NewStdioTransport("true"); !errors.Is(err, boom) {
-		t.Fatalf("stdin failure = %v", err)
-	}
-	swap(t, &pipeStdin, (*exec.Cmd).StdinPipe)
-	swap(t, &pipeStdout, func(*exec.Cmd) (io.ReadCloser, error) { return nil, boom })
-	if _, err := NewStdioTransport("true"); !errors.Is(err, boom) {
-		t.Fatalf("stdout failure = %v", err)
 	}
 }
 

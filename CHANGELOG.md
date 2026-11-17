@@ -6,8 +6,15 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ### Added
 - `pkg/mcpserver`: host-neutral helpers moved from the Dendrite control repository: result builders (`TextResult`, `JsonResult`, `ErrorResult`, `ResultOrError`, `IndentJSON`), schema builders (`TypedProp`, `ListProp`, `PropsSchema`, `ObjectSchema`, `AddTool`), `FilterTools`, and the read-only probe harness (`ProbeTools`, `ProbeOne`, `WriteProbeMatrix`) (DMCP-35).
+- `pkg/mcpclient`: generic outbound MCP client (stdio and HTTP transports, `Notify`, per-call timeouts, response matching by id, stderr in errors); `pkg/jetbrains` re-exports it (DMCP-34).
 - CI: `.github/workflows/release-refs.yml` runs `scripts/check-release-refs.sh` on every pull request, the same guard as the other Dendrite repositories (DMCP-33).
 - CI: `.github/workflows/complexity.yml` cross-checks function complexity with `gocyclo` and `gocognit`; report only while the debt (DMCP-28) is open (DMCP-27).
+
+### Fixed
+- The stdio MCP client hung in `Connect` against any real server: `notifications/initialized` went through `Send`, which waits for a reply that notifications never get. It also ignored its context, assumed one reply line per request, and left the child unreaped. Checked live against `engram mcp --tools=agent` (DMCP-34).
+
+### Changed
+- Docs no longer plan an Engram upstream: Engram is registered directly with the agents (DEN-427) (DMCP-34).
 
 ## [0.1.0]
 

@@ -175,6 +175,11 @@ func (r *recordedTransport) Send(ctx context.Context, req *jetbrains.JSONRPCRequ
 	return r.sendFn(ctx, req)
 }
 
+func (r *recordedTransport) Notify(ctx context.Context, req *jetbrains.JSONRPCRequest) error {
+	_, err := r.sendFn(ctx, req)
+	return err
+}
+
 func (r *recordedTransport) Close() error {
 	if r.closeFn != nil {
 		return r.closeFn()

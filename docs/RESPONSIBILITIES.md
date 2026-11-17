@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-`dendrite-mcp-hub` (`github.com/yasuomaidana/dendrite-mcp-hub`) is the unified Model Context Protocol (MCP) JSON-RPC 2.0 server, tool registry, and bidirectional IDE/upstream connector bridge for the Dendrite ecosystem (Pillar 5 and Pillar 9 of the 2026-10 Architecture Execution Plan). It exposes Dendrite's tool catalog to MCP-capable AI clients and IDE plugins (JetBrains IDEs, VS Code, Neovim, Zed, Claude Code, Antigravity, Cursor) while acting as an outbound MCP client and proxy to IDE servers (JetBrains built-in MCP at `:63342/api/mcp`) and upstream MCP services (Penpot MCP, Plane v2 AI/issue workflows, Engram topic memory, REA disassemblers, and local Graphify Code Knowledge). Extracting this boundary isolates protocol transport, tool schema registration, IDE plugins, and external SaaS/self-hosted MCP connectors from the core control-plane daemon (`dendrite-control`) and the Rust compute sidecars (`dendrite-core-rs`, `dendrite-rag-rs`, `dendrite-git-rs`).
+`dendrite-mcp-hub` (`github.com/yasuomaidana/dendrite-mcp-hub`) is the unified Model Context Protocol (MCP) JSON-RPC 2.0 server, tool registry, and bidirectional IDE/upstream connector bridge for the Dendrite ecosystem (Pillar 5 and Pillar 9 of the 2026-10 Architecture Execution Plan). It exposes Dendrite's tool catalog to MCP-capable AI clients and IDE plugins (JetBrains IDEs, VS Code, Neovim, Zed, Claude Code, Antigravity, Cursor) while acting as an outbound MCP client and proxy to IDE servers (JetBrains built-in MCP at `:63342/api/mcp`) and upstream MCP services (Penpot MCP, Plane v2 AI/issue workflows, REA disassemblers, and local Graphify Code Knowledge). Engram is not proxied: it is registered directly with the agents (DEN-427, DMCP-34). Extracting this boundary isolates protocol transport, tool schema registration, IDE plugins, and external SaaS/self-hosted MCP connectors from the core control-plane daemon (`dendrite-control`) and the Rust compute sidecars (`dendrite-core-rs`, `dendrite-rag-rs`, `dendrite-git-rs`).
 
 ---
 
@@ -19,8 +19,10 @@
 - **MCP JSON-RPC 2.0 Server & Tool Registry (`pkg/mcpserver`)**:
   - Protocol version `2024-11-05` lifecycle (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`), line-delimited stdio server (`ServeStdio` with 10 MB scanner buffer), and thread-safe tool registration (`RegisterTool`, `ListTools`, `HandleRequest`).
   - Host-neutral helpers every tool package needs (DMCP-35): result builders (`TextResult`, `JsonResult`, `ErrorResult`, `ResultOrError`, `IndentJSON`), schema builders (`TypedProp`, `ListProp`, `PropsSchema`, `ObjectSchema`, `AddTool`), `FilterTools` (a server holding only the tools a host's predicate keeps, which is how Dendrite builds its `core` profile) and the read-only probe harness (`ProbeTools`, `ProbeOne`, `WriteProbeMatrix`). The host supplies the tool names and probe specs.
-- **JetBrains Reverse MCP Client, Bridge & IDE Provisioning (`pkg/jetbrains`)**:
-  - Outbound MCP client (`Client`) over HTTP (`http://localhost:63342/api/mcp`) and stdio (`StdioTransport`).
+- **Generic Outbound MCP Client (`pkg/mcpclient`, DMCP-34)**:
+  - `Client` over HTTP or stdio (`StdioTransport`): handshake with `Notify`, per-call timeouts, response matching by id, child reaping. Works against any MCP server; verified live against Engram.
+- **JetBrains Bridge & IDE Provisioning (`pkg/jetbrains`)**:
+  - Re-exports the client for the IDE's MCP server (`http://localhost:63342/api/mcp`).
   - High-level IDE `Bridge` (`OpenFile`, `GetFileProblems`, `SearchSymbol`, `BuildProject`, `ExecuteRunConfiguration`, `LintFiles`).
   - Zero-touch IDE toolset provisioning (`SetupJetBrainsToolset` generating `.ai/mcp/mcp.json`, `~/.ai/mcp/mcp.json`, `.idea/runConfigurations/*.xml`, and `.idea/tools/External_Tools.xml`).
 - **Cross-Language Schema & IPC Contract Drift Monitor (`pkg/polyglot/contract`)**:
@@ -50,7 +52,8 @@
 ### What `dendrite-mcp-hub` Exposes
 1. **Go Module API (`github.com/yasuomaidana/dendrite-mcp-hub`)**:
    - `pkg/mcpserver`: `Server`, `ServerConfig`, `NewServer`, `RegisterTool`, `RegisterDefaultTools`, `ListTools`, `HandleRequest`, `ServeStdio`, `Tool`, `ToolHandler`, `CallToolParams`, `CallToolResult`, `ContentItem`, `Dependencies`.
-   - `pkg/jetbrains`: `Client`, `NewClient`, `Transport`, `HTTPTransport`, `StdioTransport`, `Bridge`, `NewBridge`, `SetupJetBrainsToolset`, `SetupOptions`, `SetupResult`, `MCPConfig`.
+   - `pkg/mcpclient`: `Client`, `NewClient`, `Transport`, `HTTPTransport`, `StdioTransport`.
+   - `pkg/jetbrains` (re-exports the client types):  `Client`, `NewClient`, `Transport`, `HTTPTransport`, `StdioTransport`, `Bridge`, `NewBridge`, `SetupJetBrainsToolset`, `SetupOptions`, `SetupResult`, `MCPConfig`.
    - `pkg/polyglot/contract`: `ContractMonitor`, `NewContractMonitor`, `SchemaContract`, `DriftViolation`.
 2. **MCP JSON-RPC 2.0 Stdio & HTTP Endpoints**:
    - Standard MCP `2024-11-05` methods (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`) over `os.Stdin`/`os.Stdout` (invoked via `dendrite mcp serve`) and planned SSE/HTTP proxy endpoints for upstream MCP aggregation.
