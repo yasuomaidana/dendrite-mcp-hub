@@ -8,7 +8,7 @@ Penpot ships an official MCP server. Can the hub adopt it as the Penpot upstream
 
 ## What the official server is (verified 2026-11-17)
 
-Sources: the [`penpot/penpot` repository, `mcp/`](https://github.com/penpot/penpot/tree/develop/mcp) and the [Penpot MCP help page](https://help.penpot.app/mcp/). The npm registry lists `@penpot/mcp` 2.15.4 as `latest` and `stable`.
+Sources: the [`penpot/penpot` repository, `mcp/`](https://github.com/penpot/penpot/tree/main/mcp) and the [Penpot MCP help page](https://help.penpot.app/mcp/). The npm registry lists `@penpot/mcp` 2.15.4 as `latest` and `stable`.
 
 | Aspect | Fact |
 |---|---|
