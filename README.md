@@ -15,7 +15,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the technical specification
 | `pkg/mcphttp` | complete: serves a registry over the MCP streamable-HTTP transport (go-sdk); tested against the client in both response modes; 100% test coverage |
 | `pkg/jetbrains` | complete: reverse IDE client, merge-safe MCP registration with per-synapse scopes, run configurations; 100% test coverage |
 | `pkg/polyglot/contract` | complete: cross-language IPC contract drift monitor; 100% test coverage |
-| `pkg/mcpserver` | the server core and types only. The tool implementations (about 11,000 lines) still live in the Dendrite control repository and move here under DMCP-1 once the hub defines ports for what they need; the hub never imports the control repository |
+| `pkg/mcpserver` | the server core, its types and the host-neutral helpers (result and schema builders, `FilterTools`, the probe harness). The tool implementations (about 11,000 lines) stay in the Dendrite control repository: they import its Plane, RAG and environment packages, and the hub never imports the control repository |
 
 ## Build and test
 

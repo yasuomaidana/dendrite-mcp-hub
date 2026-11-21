@@ -28,6 +28,7 @@ First release as a standalone module, `github.com/yasuomaidana/dendrite-mcp-hub`
 - CI quality workflow: no code file over 500 lines and no duplicated blocks (DMCP-11).
 
 ### Changed
+- `docs/RESPONSIBILITIES.md` no longer claims the Penpot parser: it stays in `dendrite-control` because it imports control packages; the hub owns only the planned Penpot MCP proxy (DMCP-35).
 - The default MCP binary written into IDE configuration is the running `dendrite` executable, never `<project>/bin/dendrite`.
 - The four Go files over the line limit were split (DMCP-11).
 - `pkg/jetbrains` and `pkg/polyglot/contract` reach 100% test coverage: repeated blocks were removed, error paths that cannot happen were dropped, and process-level calls (working directory, executable lookup, stdin and stdout) sit behind small seams so their failures are tested (DMCP-25).
