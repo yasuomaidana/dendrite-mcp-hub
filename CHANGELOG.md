@@ -5,6 +5,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ## [Unreleased]
 
 ### Added
+- `docs/adr/0001-penpot-mcp-deployment.md`: the official Penpot MCP server works through a browser plugin and is not headless, so the hub's Penpot tools read the Penpot RPC API and the official server is an optional interactive upstream (DMCP #3).
 - `pkg/mcphttp` and `mcpclient.StreamableHTTPTransport`: the registry served over the MCP streamable-HTTP transport (sessions, JSON or SSE answers) and a client transport for it, both on the official go-sdk; stdio is unchanged. Adds the `github.com/modelcontextprotocol/go-sdk` dependency and raises the `go` directive to 1.25.0 (DMCP-37).
 - `pkg/mcpclient`: generic outbound MCP client (stdio and HTTP transports, `Notify`, per-call timeouts, response matching by id, stderr in errors); `pkg/jetbrains` re-exports it (DMCP-34).
 - CI: `.github/workflows/release-refs.yml` runs `scripts/check-release-refs.sh` on every pull request, the same guard as the other Dendrite repositories (DMCP-33).
