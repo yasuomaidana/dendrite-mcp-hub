@@ -2,7 +2,7 @@
 
 Go unified MCP host bridging JetBrains IDEs, Penpot MCP, Plane AI, Engram and Dendrite tools (Pillar 5/9)
 
-`dendrite-mcp-hub` (`github.com/yasuomaidana/dendrite-mcp-hub`) provides the Model Context Protocol (MCP) JSON-RPC 2.0 server and tool registry (`pkg/mcpserver`), the generic outbound MCP client (`pkg/mcpclient`), the JetBrains IDE bridge and configuration (`pkg/jetbrains`), and cross-language IPC contract drift monitoring (`pkg/polyglot/contract`).
+`dendrite-mcp-hub` (`github.com/yasuomaidana/dendrite-mcp-hub`) provides the Model Context Protocol (MCP) JSON-RPC 2.0 server and tool registry (`pkg/mcpserver`), the generic outbound MCP client (`pkg/mcpclient`), the streamable-HTTP handler for the registry (`pkg/mcphttp`), the JetBrains IDE bridge and configuration (`pkg/jetbrains`), and cross-language IPC contract drift monitoring (`pkg/polyglot/contract`).
 Its client can reach any stdio or HTTP MCP server; aggregating upstream servers into one registry is not built (Engram is registered directly with the agents instead, DEN-427).
 It also coordinates the multi-IDE plugin adapters (JetBrains, VS Code, Neovim, Zed) while delegating control-plane orchestration to `dendrite-control` and AST, Git, and RAG compute to the Rust sidecar crates (`dendrite-core-rs`, `dendrite-git-rs`, `dendrite-rag-rs`).
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the technical specification and [docs/RESPONSIBILITIES.md](docs/RESPONSIBILITIES.md) for the ownership boundary, MCP tool-family map and Plane (`DMCP`) ticket tracking.
@@ -12,9 +12,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the technical specification
 | Package | State |
 |---|---|
 | `pkg/mcpclient` | complete: generic stdio and HTTP MCP client; the stdio handshake is tested against a real server and live against Engram; 100% test coverage |
+| `pkg/mcphttp` | complete: serves a registry over the MCP streamable-HTTP transport (go-sdk); tested against the client in both response modes; 100% test coverage |
 | `pkg/jetbrains` | complete: reverse IDE client, merge-safe MCP registration with per-synapse scopes, run configurations; 100% test coverage |
 | `pkg/polyglot/contract` | complete: cross-language IPC contract drift monitor; 100% test coverage |
-| `pkg/mcpserver` | the server core and types only. The tool implementations (about 11,000 lines) still live in the Dendrite control repository and move here under DMCP-1 once the hub defines ports for what they need; the hub never imports the control repository |
+| `pkg/mcpserver` | the server core, its types and the host-neutral helpers (result and schema builders, `FilterTools`, the probe harness). The tool implementations (about 11,000 lines) stay in the Dendrite control repository: they import its Plane, RAG and environment packages, and the hub never imports the control repository |
 
 ## Build and test
 
