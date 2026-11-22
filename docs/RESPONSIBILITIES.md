@@ -21,6 +21,8 @@
   - Host-neutral helpers every tool package needs (DMCP-35): result builders (`TextResult`, `JsonResult`, `ErrorResult`, `ResultOrError`, `IndentJSON`), schema builders (`TypedProp`, `ListProp`, `PropsSchema`, `ObjectSchema`, `AddTool`), `FilterTools` (a server holding only the tools a host's predicate keeps, which is how Dendrite builds its `core` profile) and the read-only probe harness (`ProbeTools`, `ProbeOne`, `WriteProbeMatrix`). The host supplies the tool names and probe specs.
 - **Generic Outbound MCP Client (`pkg/mcpclient`, DMCP-34)**:
   - `Client` over HTTP or stdio (`StdioTransport`): handshake with `Notify`, per-call timeouts, response matching by id, child reaping. Works against any MCP server; verified live against Engram.
+- **Streamable-HTTP MCP (`pkg/mcphttp`, `mcpclient.StreamableHTTPTransport`, DMCP-37)**:
+  - `mcphttp.Handler` serves a registry's tools over the MCP streamable-HTTP transport through the official go-sdk; the client transport speaks to any such endpoint. Stdio is unchanged.
 - **JetBrains Bridge & IDE Provisioning (`pkg/jetbrains`)**:
   - Re-exports the client for the IDE's MCP server (`http://localhost:63342/api/mcp`).
   - High-level IDE `Bridge` (`OpenFile`, `GetFileProblems`, `SearchSymbol`, `BuildProject`, `ExecuteRunConfiguration`, `LintFiles`).
@@ -52,7 +54,8 @@
 ### What `dendrite-mcp-hub` Exposes
 1. **Go Module API (`github.com/yasuomaidana/dendrite-mcp-hub`)**:
    - `pkg/mcpserver`: `Server`, `ServerConfig`, `NewServer`, `RegisterTool`, `RegisterDefaultTools`, `ListTools`, `HandleRequest`, `ServeStdio`, `Tool`, `ToolHandler`, `CallToolParams`, `CallToolResult`, `ContentItem`, `Dependencies`.
-   - `pkg/mcpclient`: `Client`, `NewClient`, `Transport`, `HTTPTransport`, `StdioTransport`.
+   - `pkg/mcpclient`: `Client`, `NewClient`, `Transport`, `HTTPTransport`, `StdioTransport`, `StreamableHTTPTransport`.
+   - `pkg/mcphttp`: `Handler`, `Options`.
    - `pkg/jetbrains` (re-exports the client types):  `Client`, `NewClient`, `Transport`, `HTTPTransport`, `StdioTransport`, `Bridge`, `NewBridge`, `SetupJetBrainsToolset`, `SetupOptions`, `SetupResult`, `MCPConfig`.
    - `pkg/polyglot/contract`: `ContractMonitor`, `NewContractMonitor`, `SchemaContract`, `DriftViolation`.
 2. **MCP JSON-RPC 2.0 Stdio & HTTP Endpoints**:
