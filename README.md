@@ -7,7 +7,7 @@ Its client can reach any stdio or HTTP MCP server; aggregating upstream servers 
 It also coordinates the multi-IDE plugin adapters (JetBrains, VS Code, Neovim, Zed) while delegating control-plane orchestration to `dendrite-control` and AST, Git, and RAG compute to the Rust sidecar crates (`dendrite-core-rs`, `dendrite-git-rs`, `dendrite-rag-rs`).
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the technical specification and [docs/RESPONSIBILITIES.md](docs/RESPONSIBILITIES.md) for the ownership boundary, MCP tool-family map and Plane (`DMCP`) ticket tracking.
 
-## Status of 0.1.0
+## Status of 0.2.0
 
 | Package | State |
 |---|---|

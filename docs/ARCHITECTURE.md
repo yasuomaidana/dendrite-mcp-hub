@@ -17,7 +17,7 @@ It has no `main` package. Hosts (the `dendrite` CLI's `inter serve` command, IDE
   - `Handler(name)` lets hosts compose tools.
 - **Calls:** `tools/call` decodes `CallToolParams{name, arguments}` and invokes the handler with the request context. A handler error becomes a `CallToolResult{isError: true}` with the message as text content. It is not a JSON-RPC error, so the client model sees why the tool failed.
 - **Transport:** `ServeStdio(ctx, in, out)` reads one JSON message per line (scanner buffer up to 10 MB for large tool arguments) and writes one response per line. Notifications get no response. It stops on EOF or context cancellation.
-- **Identity:** `ServerConfig{Name, Version}`, defaulting to `Dendrite MCP Hub` / `0.1.0`.
+- **Identity:** `ServerConfig{Name, Version}`, defaulting to `Dendrite MCP Hub` / `0.2.0`.
 
 ## 2. Generic MCP client: `pkg/mcpclient`
 

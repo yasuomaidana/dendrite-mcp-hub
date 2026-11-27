@@ -4,6 +4,11 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
+### Changed
+- CI installs `loom-gate` from dendrite-rag-rs `v0.2.0`, the first release without the BUSL-1.1 oxillama backend (DMCP-40).
+
 ### Added
 - `docs/adr/0001-penpot-mcp-deployment.md`: the official Penpot MCP server works through a browser plugin and is not headless, so the hub's Penpot tools read the Penpot RPC API and the official server is an optional interactive upstream (DMCP #3).
 - `pkg/mcphttp` and `mcpclient.StreamableHTTPTransport`: the registry served over the MCP streamable-HTTP transport (sessions, JSON or SSE answers) and a client transport for it, both on the official go-sdk; stdio is unchanged. Adds the `github.com/modelcontextprotocol/go-sdk` dependency and raises the `go` directive to 1.25.0 (DMCP-37).
