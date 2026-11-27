@@ -46,7 +46,7 @@ func NewClient(transport Transport, opts ...Option) (*Client, error) {
 	c := &Client{
 		transport:       transport,
 		protocolVersion: DefaultProtocolVersion,
-		clientInfo:      ClientInfo{Name: "dendrite-mcp-hub", Version: "0.1.0"},
+		clientInfo:      ClientInfo{Name: "dendrite-mcp-hub", Version: "0.2.0"},
 	}
 	for _, opt := range opts {
 		opt(c)

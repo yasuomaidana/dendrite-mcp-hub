@@ -21,6 +21,6 @@ var (
 
 // NewClient initializes a client for the JetBrains MCP server; options override its identity.
 func NewClient(transport Transport, opts ...Option) (*Client, error) {
-	identity := WithClientInfo("dendrite-jetbrains-bridge", "0.1.0")
+	identity := WithClientInfo("dendrite-jetbrains-bridge", "0.2.0")
 	return mcpclient.NewClient(transport, append([]Option{identity}, opts...)...)
 }

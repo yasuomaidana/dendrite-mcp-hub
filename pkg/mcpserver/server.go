@@ -27,7 +27,7 @@ type ServerConfig struct {
 // Default server identity reported by initialize when ServerConfig leaves it empty.
 const (
 	DefaultName    = "Dendrite MCP Hub"
-	DefaultVersion = "0.1.0"
+	DefaultVersion = "0.2.0"
 )
 
 // NewServer initializes an MCP server instance; empty config fields fall back to
